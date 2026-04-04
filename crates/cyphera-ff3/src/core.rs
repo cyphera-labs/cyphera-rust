@@ -343,17 +343,50 @@ impl FF3 {
 mod tests {
     use super::*;
 
-    fn test_key() -> Vec<u8> {
-        hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap()
+    fn radix26() -> Alphabet {
+        Alphabet::new("0123456789abcdefghijklmnop").unwrap()
     }
 
-    fn test_tweak() -> Vec<u8> {
-        hex::decode("D8E7920AFA330A73").unwrap()
+    fn nist_test(key_hex: &str, tweak_hex: &str, radix: usize, plaintext: &str, expected: &str) {
+        let key = hex::decode(key_hex).unwrap();
+        let tweak = hex::decode(tweak_hex).unwrap();
+        let alphabet = match radix {
+            10 => cyphera_alphabet::digits(),
+            26 => radix26(),
+            _ => panic!("unsupported radix in test"),
+        };
+        let cipher = FF3::new(&key, &tweak, alphabet).unwrap();
+        let ct = cipher.encrypt(plaintext).unwrap();
+        assert_eq!(ct, expected, "encrypt failed: {plaintext} -> expected {expected}, got {ct}");
+        let pt = cipher.decrypt(&ct).unwrap();
+        assert_eq!(pt, plaintext, "decrypt roundtrip failed");
     }
+
+    // ── All 15 NIST SP 800-38G FF3 test vectors ────────────────────────
+
+    #[test] fn nist_01() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73", 10, "890121234567890000", "750918814058654607"); }
+    #[test] fn nist_02() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A94", "9A768A92F60E12D8", 10, "890121234567890000", "018989839189395384"); }
+    #[test] fn nist_03() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A94", "D8E7920AFA330A73", 10, "89012123456789000000789000000", "48598367162252569629397416226"); }
+    #[test] fn nist_04() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A94", "0000000000000000", 10, "89012123456789000000789000000", "34695224821734535122613701434"); }
+    #[test] fn nist_05() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A94", "9A768A92F60E12D8", 26, "0123456789abcdefghi", "g2pk40i992fn20cjakb"); }
+    #[test] fn nist_06() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6", "D8E7920AFA330A73", 10, "890121234567890000", "646965393875028755"); }
+    #[test] fn nist_07() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6", "9A768A92F60E12D8", 10, "890121234567890000", "961610514491424446"); }
+    #[test] fn nist_08() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6", "D8E7920AFA330A73", 10, "89012123456789000000789000000", "53048884065350204541786380807"); }
+    #[test] fn nist_09() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6", "0000000000000000", 10, "89012123456789000000789000000", "98083802678820389295041483512"); }
+    #[test] fn nist_10() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6", "9A768A92F60E12D8", 26, "0123456789abcdefghi", "i0ihe2jfj7a9opf9p88"); }
+    #[test] fn nist_11() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "D8E7920AFA330A73", 10, "890121234567890000", "922011205562777495"); }
+    #[test] fn nist_12() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "9A768A92F60E12D8", 10, "890121234567890000", "504149865578056140"); }
+    #[test] fn nist_13() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "D8E7920AFA330A73", 10, "89012123456789000000789000000", "04344343235792599165734622699"); }
+    #[test] fn nist_14() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "0000000000000000", 10, "89012123456789000000789000000", "30859239999374053872365555822"); }
+    #[test] fn nist_15() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "9A768A92F60E12D8", 26, "0123456789abcdefghi", "p0b2godfja9bhb7bk38"); }
+
+    // ── General tests ───────────────────────────────────────────────────
 
     #[test]
-    fn test_encrypt_decrypt_roundtrip() {
-        let cipher = FF3::new(&test_key(), &test_tweak(), cyphera_alphabet::digits()).unwrap();
+    fn test_roundtrip() {
+        let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
+        let tweak = hex::decode("D8E7920AFA330A73").unwrap();
+        let cipher = FF3::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
         let ct = cipher.encrypt("1234567890").unwrap();
         let pt = cipher.decrypt(&ct).unwrap();
         assert_eq!(pt, "1234567890");
@@ -361,27 +394,20 @@ mod tests {
     }
 
     #[test]
-    fn test_nist_vector_1() {
-        let cipher = FF3::new(&test_key(), &test_tweak(), cyphera_alphabet::digits()).unwrap();
-        let ct = cipher.encrypt("890121234567890000").unwrap();
-        assert_eq!(ct, "750918814058654607");
-    }
-
-    #[test]
     fn test_deterministic() {
-        let cipher = FF3::new(&test_key(), &test_tweak(), cyphera_alphabet::digits()).unwrap();
+        let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
+        let tweak = hex::decode("D8E7920AFA330A73").unwrap();
+        let cipher = FF3::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
         let a = cipher.encrypt("12345").unwrap();
         let b = cipher.encrypt("12345").unwrap();
         assert_eq!(a, b);
     }
 
     #[test]
-    fn test_alphanumeric() {
-        let cipher = FF3::new(
-            &test_key(),
-            &test_tweak(),
-            cyphera_alphabet::alphanumeric_lower(),
-        ).unwrap();
+    fn test_alphanumeric_roundtrip() {
+        let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
+        let tweak = hex::decode("D8E7920AFA330A73").unwrap();
+        let cipher = FF3::new(&key, &tweak, cyphera_alphabet::alphanumeric_lower()).unwrap();
         let ct = cipher.encrypt("hello123").unwrap();
         let pt = cipher.decrypt(&ct).unwrap();
         assert_eq!(pt, "hello123");
@@ -389,13 +415,14 @@ mod tests {
 
     #[test]
     fn test_invalid_key() {
-        let result = FF3::new(&[0u8; 8], &test_tweak(), cyphera_alphabet::digits());
+        let result = FF3::new(&[0u8; 8], &[0u8; 8], cyphera_alphabet::digits());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_invalid_tweak() {
-        let result = FF3::new(&test_key(), &[0u8; 4], cyphera_alphabet::digits());
+        let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
+        let result = FF3::new(&key, &[0u8; 4], cyphera_alphabet::digits());
         assert!(result.is_err());
     }
 }
