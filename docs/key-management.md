@@ -11,7 +11,7 @@ pub trait KeyProvider: Send + Sync {
 }
 ```
 
-Implement this trait for your key storage. Cyphera ships with built-in providers for development, and you can write your own for production (KMS, Vault, etc.).
+Implement this trait for your key storage. Cyphera ships with providers for AWS KMS, GCP Cloud KMS, Azure Key Vault, HashiCorp Vault, and an in-memory provider for development.
 
 ## Built-in: Memory Provider
 
@@ -71,32 +71,92 @@ Active → Deprecated → Disabled
 - `resolve()` returns the latest `Active` version (for encryption)
 - `resolve_version()` returns a specific version (for decrypting old ciphertext)
 
+## Built-in Providers
+
+### AWS KMS
+
+```rust
+use cyphera_keys_aws::AwsKmsProvider;
+
+let provider = AwsKmsProvider::new(AwsKmsConfig {
+    key_arn: "arn:aws:kms:us-east-1:123456789:key/...",
+    region: "us-east-1",
+})?;
+```
+
+### GCP Cloud KMS
+
+```rust
+use cyphera_keys_gcp::GcpKmsProvider;
+
+let provider = GcpKmsProvider::new(GcpKmsConfig {
+    key_name: "projects/my-project/locations/us/keyRings/my-ring/cryptoKeys/my-key",
+})?;
+```
+
+### Azure Key Vault
+
+```rust
+use cyphera_keys_azure::AzureKeyVaultProvider;
+
+let provider = AzureKeyVaultProvider::new(AzureConfig {
+    vault_url: "https://my-vault.vault.azure.net/",
+    key_name: "my-key",
+})?;
+```
+
+### HashiCorp Vault
+
+```rust
+use cyphera_keys_vault::VaultTransitProvider;
+
+let provider = VaultTransitProvider::new(VaultConfig {
+    address: "https://vault.example.com:8200",
+    token: std::env::var("VAULT_TOKEN")?,
+    mount: "transit",
+    key_name: "my-key",
+})?;
+```
+
+### Memory (dev/test only)
+
+```rust
+use cyphera::{MemoryProvider, KeyRecord, KeyStatus};
+
+let provider = MemoryProvider::new(vec![
+    KeyRecord {
+        key_ref: "primary".into(),
+        version: 1,
+        status: KeyStatus::Active,
+        material: key_bytes.to_vec(),
+        tweak: tweak_bytes.to_vec(),
+    },
+]);
+```
+
+All providers implement the same `KeyProvider` trait. Swap providers without changing your encryption code.
+
 ## Writing a Custom Provider
 
-For production, implement `KeyProvider` to talk to your key management system:
+If you use a key store we don't ship with, implement the trait:
 
 ```rust
 use cyphera::keys::{KeyProvider, KeyRecord, KeyError};
 
-struct AwsKmsProvider {
-    // your AWS SDK client, key ARN, etc.
-}
+struct MyProvider { /* ... */ }
 
-impl KeyProvider for AwsKmsProvider {
+impl KeyProvider for MyProvider {
     fn resolve(&self, key_ref: &str) -> Result<KeyRecord, KeyError> {
-        // Call AWS KMS to unwrap the data encryption key
-        // Return the unwrapped key material
+        // Resolve the active key version from your store
         todo!()
     }
 
     fn resolve_version(&self, key_ref: &str, version: u32) -> Result<KeyRecord, KeyError> {
-        // Resolve a specific key version
+        // Resolve a specific version (for decrypting old data)
         todo!()
     }
 }
 ```
-
-The same pattern works for GCP KMS, Azure Key Vault, HashiCorp Vault, or any other secret store. Cyphera doesn't care where the key comes from — just that it arrives via the `KeyProvider` trait.
 
 ## Key Requirements
 
