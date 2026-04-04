@@ -129,6 +129,18 @@ Input:     03/15/1990         →  Output:    p3/x8/n5k2
 
 No schema changes. No column width changes. Fits wherever the original data did.
 
+## Key Providers
+
+| Provider | Crate | Use case |
+|----------|-------|----------|
+| Memory | `cyphera` (built-in) | Dev and testing |
+| AWS KMS | `cyphera-keys-aws` | AWS deployments |
+| GCP Cloud KMS | `cyphera-keys-gcp` | GCP deployments |
+| Azure Key Vault | `cyphera-keys-azure` | Azure deployments |
+| HashiCorp Vault | `cyphera-keys-vault` | Multi-cloud / on-prem |
+
+See [Key Management](key-management.md) for setup details.
+
 ## Engines
 
 | Engine | Reversible | Use case |
