@@ -21,3 +21,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
+keychain = { path = "../../../keychain/crates/keychain" }
+keychain-env = { path = "../../../keychain/crates/keychain-env" }
