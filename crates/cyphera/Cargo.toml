@@ -16,6 +16,7 @@ cyphera-hash = { path = "../cyphera-hash" }
 cyphera-keys = { path = "../cyphera-keys" }
 cyphera-policy = { path = "../cyphera-policy" }
 cyphera-audit = { path = "../cyphera-audit" }
+keychain = { path = "../../../keychain/crates/keychain" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
