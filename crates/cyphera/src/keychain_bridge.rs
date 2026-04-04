@@ -20,20 +20,27 @@ use keychain::{KeyStore, KeychainError};
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+/// Cached resolved key
+#[derive(Clone)]
+struct CachedKey {
+    material: Vec<u8>,
+    tweak: Option<Vec<u8>>,
+    version: Option<u32>,
+}
+
 /// A KeyProvider backed by a keychain KeyStore.
-/// Resolves key_ref values as keychain URIs.
+/// Resolves key_ref values as keychain names, aliases, or URIs.
+/// Picks up tweak, version, and algorithm from key configs.
 pub struct KeychainProvider {
     store: KeyStore,
     tweak_default: Vec<u8>,
-    // Simple cache: URI → resolved key material
-    cache: RwLock<HashMap<String, Vec<u8>>>,
+    cache: RwLock<HashMap<String, CachedKey>>,
 }
 
 impl KeychainProvider {
     /// Create a new KeychainProvider wrapping a keychain KeyStore.
     ///
-    /// `tweak_default` is used as the tweak for all resolved keys.
-    /// For per-key tweaks, derive them from the URI or key metadata.
+    /// `tweak_default` is used when a key config doesn't specify a tweak.
     pub fn new(store: KeyStore, tweak_default: Vec<u8>) -> Self {
         Self {
             store,
@@ -42,46 +49,49 @@ impl KeychainProvider {
         }
     }
 
-    fn resolve_uri(&self, uri: &str) -> Result<Vec<u8>, KeyError> {
-        // Check cache first
+    fn resolve_key(&self, name: &str) -> Result<CachedKey, KeyError> {
+        // Check cache
         if let Ok(cache) = self.cache.read() {
-            if let Some(material) = cache.get(uri) {
-                return Ok(material.clone());
+            if let Some(cached) = cache.get(name) {
+                return Ok(cached.clone());
             }
         }
 
-        // Resolve via keychain
-        let resolved = self.store.resolve(uri).map_err(|e| match e {
+        // Resolve via keychain (full — picks up tweak, version, etc.)
+        let resolved = self.store.resolve_full(name).map_err(|e| match e {
             KeychainError::NotFound(msg) => KeyError::NotFound(msg),
             other => KeyError::NotFound(other.to_string()),
         })?;
 
+        let cached = CachedKey {
+            material: resolved.material,
+            tweak: resolved.tweak,
+            version: resolved.version,
+        };
+
         // Cache it
         if let Ok(mut cache) = self.cache.write() {
-            cache.insert(uri.to_string(), resolved.material.clone());
+            cache.insert(name.to_string(), cached.clone());
         }
 
-        Ok(resolved.material)
+        Ok(cached)
     }
 }
 
 impl KeyProvider for KeychainProvider {
     fn resolve(&self, key_ref: &str) -> Result<KeyRecord, KeyError> {
-        let material = self.resolve_uri(key_ref)?;
+        let cached = self.resolve_key(key_ref)?;
 
         Ok(KeyRecord {
             key_ref: key_ref.to_string(),
-            version: 1,
+            version: cached.version.unwrap_or(1),
             status: KeyStatus::Active,
-            material,
-            tweak: self.tweak_default.clone(),
+            material: cached.material,
+            tweak: cached.tweak.unwrap_or_else(|| self.tweak_default.clone()),
         })
     }
 
     fn resolve_version(&self, key_ref: &str, _version: u32) -> Result<KeyRecord, KeyError> {
-        // Keychain doesn't have versioning — always resolves current.
-        // For versioned keys, the URI itself should include version info,
-        // or use a backend that supports it (Vault, KMS key aliases).
         self.resolve(key_ref)
     }
 }
