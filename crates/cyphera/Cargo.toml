@@ -1,0 +1,19 @@
+[package]
+name = "cyphera"
+description = "Data obfuscation SDK — FPE, AES, masking, hashing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cyphera-alphabet = { path = "../cyphera-alphabet" }
+cyphera-ff1 = { path = "../cyphera-ff1" }
+cyphera-ff3 = { path = "../cyphera-ff3" }
+cyphera-aes = { path = "../cyphera-aes" }
+cyphera-mask = { path = "../cyphera-mask" }
+cyphera-hash = { path = "../cyphera-hash" }
+cyphera-keys = { path = "../cyphera-keys" }
+cyphera-policy = { path = "../cyphera-policy" }
+cyphera-audit = { path = "../cyphera-audit" }
+thiserror = { workspace = true }

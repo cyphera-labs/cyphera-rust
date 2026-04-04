@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cyphera",
+    "crates/cyphera-ff1",
+    "crates/cyphera-ff3",
+    "crates/cyphera-aes",
+    "crates/cyphera-mask",
+    "crates/cyphera-hash",
+    "crates/cyphera-alphabet",
+    "crates/cyphera-keys",
+    "crates/cyphera-policy",
+    "crates/cyphera-audit",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/cyphera-labs/cyphera-rust"
+
+[workspace.dependencies]
+aes = "0.8"
+ctr = "0.9"
+cmac = "0.7"
+hmac = "0.12"
+sha2 = "0.10"
+hkdf = "0.12"
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+subtle = "2.5"
+rand = "0.8"
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+thiserror = "2"
