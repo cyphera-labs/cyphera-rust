@@ -13,6 +13,7 @@ num-bigint = { workspace = true }
 num-traits = { workspace = true }
 num-integer = { workspace = true }
 cyphera-alphabet = { path = "../cyphera-alphabet" }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
