@@ -1,0 +1,17 @@
+[package]
+name = "cyphera-ff3"
+description = "FF3-1 Format-Preserving Encryption (NIST SP 800-38G Rev 1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aes = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = { workspace = true }
+num-integer = { workspace = true }
+cyphera-alphabet = { path = "../cyphera-alphabet" }
+
+[dev-dependencies]
+hex = { workspace = true }
