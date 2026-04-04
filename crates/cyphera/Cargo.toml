@@ -17,3 +17,6 @@ cyphera-keys = { path = "../cyphera-keys" }
 cyphera-policy = { path = "../cyphera-policy" }
 cyphera-audit = { path = "../cyphera-audit" }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }
