@@ -1,5 +1,11 @@
 # cyphera
 
+[![CI](https://github.com/cyphera-labs/cyphera-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/cyphera-labs/cyphera-rust/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/cyphera)](https://crates.io/crates/cyphera)
+[![crates.io downloads](https://img.shields.io/crates/d/cyphera)](https://crates.io/crates/cyphera)
+[![Rust](https://img.shields.io/badge/rust-2021%20edition-orange)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+
 Data protection SDK for Rust — format-preserving encryption (FF1/FF3), AES-GCM, data masking, and hashing.
 
 ## Install
