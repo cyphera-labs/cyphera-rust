@@ -10,13 +10,13 @@ pub mod audit;
 mod client;
 mod format;
 
-#[cfg(feature = "keychain")]
-pub mod keychain_bridge;
+
+
 
 pub use client::{Client, ClientBuilder, CypheraError, ProtectResult};
 
-#[cfg(feature = "keychain")]
-pub use keychain_bridge::KeychainProvider;
+
+
 
 pub use keys::{KeyProvider, KeyRecord, KeyStatus, MemoryProvider};
 pub use policy::{PolicyFile, PolicyEntry};
