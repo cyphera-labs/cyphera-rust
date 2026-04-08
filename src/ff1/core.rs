@@ -64,7 +64,7 @@ impl FF1 {
             radix,
             aes,
             tweak: tweak.to_vec(),
-            max_len: 56,
+            max_len: usize::MAX, // NIST FF1 has no max length
             alpha,
             index,
         })
@@ -284,24 +284,22 @@ impl FF1 {
         y
     }
 
-    /// Expand R to d bytes using AES-ECB counter mode
+    /// Expand R to d bytes per NIST SP 800-38G: S = R || AES(R ⊕ [1]) || AES(R ⊕ [2]) || ...
     fn expand_s(&self, r: &[u8; 16], d: usize) -> Vec<u8> {
         let need_blocks = (d + 15) / 16;
         let mut out = Vec::with_capacity(need_blocks * 16);
         out.extend_from_slice(r);
-        let mut prev = *r;
         for j in 1..need_blocks {
             let mut x = [0u8; 16];
-            // j as big-endian 128-bit int XOR prev
             x[8..16].copy_from_slice(&(j as u64).to_be_bytes());
+            // XOR with R (not previous block) per NIST SP 800-38G
             for k in 0..16 {
-                x[k] ^= prev[k];
+                x[k] ^= r[k];
             }
             let mut block = Block::from(x);
             self.aes.encrypt_block(&mut block);
             let arr: [u8; 16] = block.into();
             out.extend_from_slice(&arr);
-            prev = arr;
         }
         out.truncate(d);
         out
