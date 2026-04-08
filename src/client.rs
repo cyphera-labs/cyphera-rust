@@ -1,7 +1,7 @@
-use cyphera_alphabet::{self, Alphabet};
-use cyphera_audit::{AuditEvent, AuditLogger, NoopLogger};
-use cyphera_keys::{KeyProvider, KeyRecord, MemoryProvider, KeyStatus};
-use cyphera_policy::{PolicyFile, PolicyEntry};
+use crate::alphabet::Alphabet;
+use crate::audit::{AuditEvent, AuditLogger, NoopLogger};
+use crate::keys::{KeyProvider, KeyRecord};
+use crate::policy::{PolicyFile, PolicyEntry};
 use thiserror::Error;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,19 +13,19 @@ pub enum CypheraError {
     #[error("policy not found: {0}")]
     PolicyNotFound(String),
     #[error("key error: {0}")]
-    Key(#[from] cyphera_keys::KeyError),
+    Key(#[from] crate::keys::KeyError),
     #[error("policy error: {0}")]
-    Policy(#[from] cyphera_policy::PolicyError),
+    Policy(#[from] crate::policy::PolicyError),
     #[error("ff1 error: {0}")]
-    FF1(#[from] cyphera_ff1::FF1Error),
+    FF1(#[from] crate::ff1::FF1Error),
     #[error("ff3 error: {0}")]
-    FF3(#[from] cyphera_ff3::FF3Error),
+    FF3(#[from] crate::ff3::FF3Error),
     #[error("unknown engine: {0}")]
     UnknownEngine(String),
     #[error("input too short for masking")]
     MaskInputTooShort,
     #[error("hash error: {0}")]
-    Hash(#[from] cyphera_hash::HashError),
+    Hash(#[from] crate::hash::HashError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -47,12 +47,41 @@ pub struct ProtectResult {
 /// The main Cyphera client. This is what developers use.
 pub struct Client {
     policies: HashMap<String, PolicyEntry>,
+    tag_index: HashMap<String, String>, // tag → policy name
     key_provider: Arc<dyn KeyProvider>,
     logger: Arc<dyn AuditLogger>,
     default_key_ref: Option<String>,
 }
 
 impl Client {
+    /// Validate policies and build tag index. Errors on:
+    /// - tag_enabled=true with no tag specified
+    /// - duplicate tags across policies
+    fn validate_and_build_tag_index(policies: &HashMap<String, PolicyEntry>) -> Result<HashMap<String, String>> {
+        let mut index = HashMap::new();
+        for (name, policy) in policies.iter() {
+            if policy.tag_enabled {
+                match &policy.tag {
+                    None => return Err(CypheraError::PolicyNotFound(
+                        format!("policy '{}' has tag_enabled=true but no tag specified", name)
+                    )),
+                    Some(tag) if tag.is_empty() => return Err(CypheraError::PolicyNotFound(
+                        format!("policy '{}' has tag_enabled=true but tag is empty", name)
+                    )),
+                    Some(tag) => {
+                        if let Some(existing) = index.get(tag) {
+                            return Err(CypheraError::PolicyNotFound(
+                                format!("tag collision: '{}' used by both '{}' and '{}'", tag, existing, name)
+                            ));
+                        }
+                        index.insert(tag.clone(), name.clone());
+                    }
+                }
+            }
+        }
+        Ok(index)
+    }
+
     /// Create a client from a YAML policy file on disk
     pub fn from_policy_file(
         path: &str,
@@ -60,8 +89,11 @@ impl Client {
     ) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
         let pf = PolicyFile::from_yaml(&contents)?;
+        let policies = pf.policies;
+        let tag_index = Self::validate_and_build_tag_index(&policies)?;
         Ok(Self {
-            policies: pf.policies,
+            policies,
+            tag_index,
             key_provider: Arc::from(key_provider),
             logger: Arc::new(NoopLogger),
             default_key_ref: None,
@@ -72,47 +104,16 @@ impl Client {
     pub fn from_policy(
         policy: PolicyFile,
         key_provider: Box<dyn KeyProvider>,
-    ) -> Self {
-        Self {
-            policies: policy.policies,
+    ) -> Result<Self> {
+        let policies = policy.policies;
+        let tag_index = Self::validate_and_build_tag_index(&policies)?;
+        Ok(Self {
+            policies,
+            tag_index,
             key_provider: Arc::from(key_provider),
             logger: Arc::new(NoopLogger),
             default_key_ref: None,
-        }
-    }
-
-    /// Quick start: create a client with a raw key and built-in presets.
-    /// Uses FF1 + alphanumeric for all presets.
-    pub fn with_defaults(key: &[u8], tweak: &[u8]) -> Self {
-        let key_ref = "default".to_string();
-        let provider = MemoryProvider::new(vec![
-            KeyRecord {
-                key_ref: key_ref.clone(),
-                version: 1,
-                status: KeyStatus::Active,
-                material: key.to_vec(),
-                tweak: tweak.to_vec(),
-            },
-        ]);
-
-        let mut policies = HashMap::new();
-        // Built-in presets — all use ff1 + alphanumeric + default key
-        for name in &["ssn", "card", "pan", "phone", "dob", "name", "address", "general"] {
-            policies.insert(name.to_string(), PolicyEntry {
-                engine: "ff1".to_string(),
-                alphabet: Some("alphanumeric".to_string()),
-                key_ref: Some(key_ref.clone()),
-                tag: None,
-                mode: None,
-            });
-        }
-
-        Self {
-            policies,
-            key_provider: Arc::new(provider),
-            logger: Arc::new(NoopLogger),
-            default_key_ref: Some(key_ref),
-        }
+        })
     }
 
     /// Use the builder for full control
@@ -124,29 +125,45 @@ impl Client {
 
     /// Encrypt a value using the named policy.
     /// Structural characters (dashes, slashes, etc.) are preserved.
+    /// Tag is prepended to the final output if tag_enabled.
     pub fn encrypt(&self, policy_name: &str, plaintext: &str) -> Result<ProtectResult> {
         let policy = self.get_policy(policy_name)?;
         let alphabet = self.resolve_alphabet(&policy);
         let key = self.resolve_key(&policy)?;
 
-        // Extract encryptable chars, preserving structure
+        // 1. Strip passthroughs
         let (extracted, template) = format::extract(plaintext, &alphabet);
 
-        // Encrypt the extracted portion
+        // 2. Validate
+        if extracted.is_empty() {
+            return Err(CypheraError::PolicyNotFound(
+                "no encryptable characters in input".to_string()
+            ));
+        }
+
+        // 3. Encrypt
         let encrypted = match policy.engine.as_str() {
             "ff1" => {
-                let cipher = cyphera_ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
+                let cipher = crate::ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
             }
             "ff3" => {
-                let cipher = cyphera_ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
+                let cipher = crate::ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
             }
             engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
         };
 
-        // Reconstruct with structural chars
-        let output = format::reconstruct(&encrypted, &template);
+        // 3. Reinsert passthroughs
+        let with_passthroughs = format::reconstruct(&encrypted, &template);
+
+        // 4. Prepend tag
+        let output = if policy.tag_enabled {
+            let tag = policy.tag.as_deref().unwrap_or("");
+            format!("{}{}", tag, with_passthroughs)
+        } else {
+            with_passthroughs
+        };
 
         self.log_event(policy_name, "encrypt", &policy.engine, &key, true);
 
@@ -160,26 +177,37 @@ impl Client {
         })
     }
 
-    /// Decrypt a value using the named policy.
+    /// Decrypt a value using the named policy. Strips tag if present.
     pub fn decrypt(&self, policy_name: &str, ciphertext: &str) -> Result<ProtectResult> {
         let policy = self.get_policy(policy_name)?;
         let alphabet = self.resolve_alphabet(&policy);
         let key = self.resolve_key(&policy)?;
 
-        let (extracted, template) = format::extract(ciphertext, &alphabet);
+        // 1. Strip tag
+        let without_tag = if policy.tag_enabled {
+            let tag_len = policy.tag.as_ref().map(|t| t.len()).unwrap_or(0);
+            &ciphertext[tag_len..]
+        } else {
+            ciphertext
+        };
 
+        // 2. Strip passthroughs
+        let (extracted, template) = format::extract(without_tag, &alphabet);
+
+        // 3. Decrypt
         let decrypted = match policy.engine.as_str() {
             "ff1" => {
-                let cipher = cyphera_ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
+                let cipher = crate::ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
             }
             "ff3" => {
-                let cipher = cyphera_ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
+                let cipher = crate::ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
             }
             engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
         };
 
+        // 4. Reinsert passthroughs
         let output = format::reconstruct(&decrypted, &template);
 
         self.log_event(policy_name, "decrypt", &policy.engine, &key, true);
@@ -194,15 +222,15 @@ impl Client {
         })
     }
 
-    /// Mask a value — irreversible.
+    /// Mask a value — irreversible. Simple show/hide based on pattern.
     pub fn mask(&self, plaintext: &str, pattern: &str) -> Result<ProtectResult> {
         let output = match pattern {
-            "last4" | "last_4" => cyphera_mask::last_n(plaintext, 4, '*'),
-            "last6" | "last_6" => cyphera_mask::last_n(plaintext, 6, '*'),
-            "first4" | "first_4" => cyphera_mask::first_n(plaintext, 4, '*'),
-            "first6" | "first_6" => cyphera_mask::first_n(plaintext, 6, '*'),
-            "full" => cyphera_mask::full(plaintext, '*'),
-            _ => cyphera_mask::full(plaintext, '*'),
+            "last4" | "last_4" => crate::mask::last_n(plaintext, 4, '*'),
+            "last2" | "last_2" => crate::mask::last_n(plaintext, 2, '*'),
+            "first1" | "first_1" => crate::mask::first_n(plaintext, 1, '*'),
+            "first3" | "first_3" => crate::mask::first_n(plaintext, 3, '*'),
+            "full" => crate::mask::full(plaintext, '*'),
+            _ => crate::mask::full(plaintext, '*'),
         };
 
         Ok(ProtectResult {
@@ -218,16 +246,23 @@ impl Client {
     /// Hash a value — irreversible, deterministic.
     pub fn hash(&self, policy_name: &str, plaintext: &str) -> Result<ProtectResult> {
         let policy = self.get_policy(policy_name)?;
-        let key = self.resolve_key(&policy)?;
+        let algorithm = policy.algorithm.as_deref().unwrap_or("sha256");
 
-        let output = cyphera_hash::hmac_sha256(&key.material, plaintext)?;
+        let (output, key_ref, key_version) = if policy.key_ref.is_some() {
+            let key = self.resolve_key(&policy)?;
+            let out = crate::hash::hash(algorithm, Some(&key.material), plaintext)?;
+            (out, Some(key.key_ref.clone()), Some(key.version))
+        } else {
+            let out = crate::hash::hash(algorithm, None, plaintext)?;
+            (out, None, None)
+        };
 
         Ok(ProtectResult {
             output,
             policy_name: policy_name.to_string(),
             engine: "hash".to_string(),
-            key_ref: Some(key.key_ref.clone()),
-            key_version: Some(key.version),
+            key_ref,
+            key_version,
             reversible: false,
         })
     }
@@ -240,9 +275,11 @@ impl Client {
     pub fn protect(&self, policy_name: &str, value: &str) -> Result<ProtectResult> {
         let policy = self.get_policy(policy_name)?;
         match policy.engine.as_str() {
-            "ff1" | "ff3" | "aes" => self.encrypt(policy_name, value),
+            "ff1" | "ff3" | "aes_gcm" => self.encrypt(policy_name, value),
             "mask" => {
-                let pattern = policy.alphabet.as_deref().unwrap_or("full");
+                let pattern = policy.pattern.as_deref().ok_or_else(||
+                    CypheraError::PolicyNotFound("mask policy requires 'pattern' field".to_string())
+                )?;
                 self.mask(value, pattern)
             }
             "hash" => self.hash(policy_name, value),
@@ -250,17 +287,32 @@ impl Client {
         }
     }
 
-    /// Access (reverse) a protected value.
-    /// Decrypts if reversible, errors if the policy uses an irreversible engine.
+    /// Access (reverse) a protected value using explicit policy name.
     pub fn access(&self, policy_name: &str, value: &str) -> Result<ProtectResult> {
         let policy = self.get_policy(policy_name)?;
         match policy.engine.as_str() {
-            "ff1" | "ff3" | "aes" => self.decrypt(policy_name, value),
+            "ff1" | "ff3" | "aes_gcm" => self.decrypt(policy_name, value),
             "mask" | "hash" => Err(CypheraError::UnknownEngine(
                 format!("cannot reverse '{}' — {} is irreversible", policy_name, policy.engine)
             )),
             engine => Err(CypheraError::UnknownEngine(engine.to_string())),
         }
+    }
+
+    /// Access (reverse) a protected value using the embedded tag.
+    /// Looks up the tag from the first N chars, finds the policy, decrypts.
+    /// Tags are checked longest-first to prevent prefix collisions.
+    pub fn access_by_tag(&self, value: &str) -> Result<ProtectResult> {
+        let mut tags: Vec<_> = self.tag_index.iter().collect();
+        tags.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (tag, policy_name) in tags {
+            if value.starts_with(tag.as_str()) {
+                return self.access(policy_name, value);
+            }
+        }
+        Err(CypheraError::PolicyNotFound(
+            "no matching tag found — use access(policy_name, value) for untagged values".to_string()
+        ))
     }
 
     /// Encrypt multiple values in batch.
@@ -290,14 +342,15 @@ impl Client {
 
     fn resolve_alphabet(&self, policy: &PolicyEntry) -> Alphabet {
         match policy.alphabet.as_deref() {
-            Some("digits") => cyphera_alphabet::digits(),
-            Some("hex") => cyphera_alphabet::hex_lower(),
-            Some("alphanumeric_lower") | Some("alphanumeric") => {
-                cyphera_alphabet::alphanumeric_lower()
-            }
-            Some("alphanumeric_full") => cyphera_alphabet::alphanumeric(),
-            // Default: alphanumeric lowercase (the secure, non-exploding default)
-            _ => cyphera_alphabet::alphanumeric_lower(),
+            Some("digits") => crate::alphabet::digits(),
+            Some("hex") => crate::alphabet::hex_lower(),
+            Some("alpha_lower") => Alphabet::new("abcdefghijklmnopqrstuvwxyz").unwrap(),
+            Some("alpha_upper") => Alphabet::new("ABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap(),
+            Some("alpha") => Alphabet::new("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ").unwrap(),
+            Some("alphanumeric") => crate::alphabet::alphanumeric(),
+            Some(custom) => Alphabet::new(custom).unwrap_or_else(|_| crate::alphabet::alphanumeric()),
+            // Default: alphanumeric radix 62
+            None => crate::alphabet::alphanumeric(),
         }
     }
 
@@ -376,8 +429,12 @@ impl ClientBuilder {
         let key_provider = self.key_provider
             .ok_or_else(|| CypheraError::PolicyNotFound("key_provider is required".to_string()))?;
 
+        let policies = self.policies;
+        let tag_index = Client::validate_and_build_tag_index(&policies)?;
+
         Ok(Client {
-            policies: self.policies,
+            policies,
+            tag_index,
             key_provider: Arc::from(key_provider),
             logger: match self.logger {
                 Some(l) => Arc::from(l) as Arc<dyn AuditLogger>,
@@ -406,11 +463,58 @@ mod tests {
         vec![0u8; 8]
     }
 
-    // ── Quick start (with_defaults) ─────────────────────────────────────
+    fn test_client() -> Client {
+        let yaml = r#"
+policies:
+  ssn:
+    engine: ff1
+    alphabet: alphanumeric
+    key_ref: k1
+    tag: s01
+  card:
+    engine: ff1
+    alphabet: alphanumeric
+    key_ref: k1
+    tag: c01
+  phone:
+    engine: ff1
+    alphabet: alphanumeric
+    key_ref: k1
+    tag: h01
+  dob:
+    engine: ff1
+    alphabet: alphanumeric
+    key_ref: k1
+    tag: d01
+  name:
+    engine: ff1
+    alphabet: alphanumeric
+    key_ref: k1
+    tag: n01
+  general:
+    engine: ff1
+    alphabet: alphanumeric
+    key_ref: k1
+    tag: g01
+"#;
+        let pf = PolicyFile::from_yaml(yaml).unwrap();
+        let provider = crate::keys::MemoryProvider::new(vec![
+            KeyRecord {
+                key_ref: "k1".into(),
+                version: 1,
+                status: crate::keys::KeyStatus::Active,
+                material: test_key(),
+                tweak: test_tweak(),
+            },
+        ]);
+        Client::from_policy(pf, Box::new(provider)).unwrap()
+    }
+
+    // ── Core tests ─────────────────────────────────────────────────
 
     #[test]
     fn test_encrypt_decrypt_ssn() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let ct = client.encrypt("ssn", "123-45-6789").unwrap();
         assert_ne!(ct.output, "123-45-6789");
         // Dashes preserved
@@ -422,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt_card() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let ct = client.encrypt("card", "4111-1111-1111-1111").unwrap();
         // Dashes preserved
         assert_eq!(ct.output.matches('-').count(), 3);
@@ -432,7 +536,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt_phone() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let ct = client.encrypt("phone", "(555) 867-5309").unwrap();
         // Structural chars preserved
         assert!(ct.output.contains('('));
@@ -445,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_decrypt_dob() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let ct = client.encrypt("dob", "03/15/1990").unwrap();
         assert_eq!(ct.output.matches('/').count(), 2);
         let pt = client.decrypt("dob", &ct.output).unwrap();
@@ -454,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_encrypt_plain_string() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let ct = client.encrypt("name", "johnsmith").unwrap();
         let pt = client.decrypt("name", &ct.output).unwrap();
         assert_eq!(pt.output, "johnsmith");
@@ -462,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_deterministic() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let a = client.encrypt("ssn", "123-45-6789").unwrap();
         let b = client.encrypt("ssn", "123-45-6789").unwrap();
         assert_eq!(a.output, b.output);
@@ -470,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_different_inputs_different_outputs() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let a = client.encrypt("ssn", "123-45-6789").unwrap();
         let b = client.encrypt("ssn", "987-65-4321").unwrap();
         assert_ne!(a.output, b.output);
@@ -480,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_mask_last4() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let r = client.mask("123-45-6789", "last4").unwrap();
         assert_eq!(r.output, "*******6789");
         assert!(!r.reversible);
@@ -488,9 +592,9 @@ mod tests {
 
     #[test]
     fn test_mask_full() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let r = client.mask("123-45-6789", "full").unwrap();
-        assert_eq!(r.output, "***-**-****");
+        assert_eq!(r.output, "***********");
         assert!(!r.reversible);
     }
 
@@ -498,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_hash_deterministic() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let a = client.hash("ssn", "123-45-6789").unwrap();
         let b = client.hash("ssn", "123-45-6789").unwrap();
         assert_eq!(a.output, b.output);
@@ -507,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_hash_different_inputs() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let a = client.hash("ssn", "123-45-6789").unwrap();
         let b = client.hash("ssn", "987-65-4321").unwrap();
         assert_ne!(a.output, b.output);
@@ -517,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_batch_encrypt() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let items = vec![
             ("ssn", "123-45-6789"),
             ("card", "4111-1111-1111-1111"),
@@ -540,23 +644,25 @@ policies:
     engine: ff1
     alphabet: alphanumeric
     key_ref: mykey
+    tag_enabled: false
   card:
     engine: ff3
     alphabet: digits
     key_ref: mykey
+    tag_enabled: false
 "#;
         let pf = PolicyFile::from_yaml(yaml).unwrap();
-        let provider = MemoryProvider::new(vec![
+        let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "mykey".into(),
                 version: 1,
-                status: KeyStatus::Active,
+                status: crate::keys::KeyStatus::Active,
                 material: test_key(),
                 tweak: test_tweak(),
             },
         ]);
 
-        let client = Client::from_policy(pf, Box::new(provider));
+        let client = Client::from_policy(pf, Box::new(provider)).unwrap();
 
         // SSN uses ff1 + alphanumeric
         let ct = client.encrypt("ssn", "123-45-6789").unwrap();
@@ -575,7 +681,7 @@ policies:
 
     #[test]
     fn test_protect_dispatches_to_encrypt() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let r = client.protect("ssn", "123-45-6789").unwrap();
         assert!(r.reversible);
         assert_eq!(r.engine, "ff1");
@@ -590,20 +696,21 @@ policies:
 policies:
   ssn_display:
     engine: mask
-    alphabet: last4
+    pattern: last4
+    tag_enabled: false
     key_ref: k1
 "#;
         let pf = PolicyFile::from_yaml(yaml).unwrap();
-        let provider = MemoryProvider::new(vec![
+        let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
                 version: 1,
-                status: KeyStatus::Active,
+                status: crate::keys::KeyStatus::Active,
                 material: test_key(),
                 tweak: test_tweak(),
             },
         ]);
-        let client = Client::from_policy(pf, Box::new(provider));
+        let client = Client::from_policy(pf, Box::new(provider)).unwrap();
         let r = client.protect("ssn_display", "123-45-6789").unwrap();
         assert_eq!(r.output, "*******6789");
         assert!(!r.reversible);
@@ -616,18 +723,19 @@ policies:
   ssn_token:
     engine: hash
     key_ref: k1
+    tag_enabled: false
 "#;
         let pf = PolicyFile::from_yaml(yaml).unwrap();
-        let provider = MemoryProvider::new(vec![
+        let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
                 version: 1,
-                status: KeyStatus::Active,
+                status: crate::keys::KeyStatus::Active,
                 material: test_key(),
                 tweak: test_tweak(),
             },
         ]);
-        let client = Client::from_policy(pf, Box::new(provider));
+        let client = Client::from_policy(pf, Box::new(provider)).unwrap();
         let r = client.protect("ssn_token", "123-45-6789").unwrap();
         assert!(!r.reversible);
         assert!(!r.output.is_empty());
@@ -640,7 +748,7 @@ policies:
 
     #[test]
     fn test_unknown_policy() {
-        let client = Client::with_defaults(&test_key(), &test_tweak());
+        let client = test_client();
         let r = client.encrypt("nonexistent", "hello");
         assert!(r.is_err());
     }
@@ -649,11 +757,11 @@ policies:
 
     #[test]
     fn test_builder() {
-        let provider = MemoryProvider::new(vec![
+        let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
                 version: 1,
-                status: KeyStatus::Active,
+                status: crate::keys::KeyStatus::Active,
                 material: test_key(),
                 tweak: test_tweak(),
             },
@@ -664,6 +772,7 @@ policies:
   ssn:
     engine: ff1
     key_ref: k1
+    tag_enabled: false
 "#;
         let pf = PolicyFile::from_yaml(yaml).unwrap();
 

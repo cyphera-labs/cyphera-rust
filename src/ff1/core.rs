@@ -3,7 +3,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use num_bigint::BigUint;
 use num_traits::Zero;
 use num_integer::Integer;
-use cyphera_alphabet::Alphabet;
+use crate::alphabet::Alphabet;
 use std::collections::HashMap;
 use thiserror::Error;
 
@@ -18,7 +18,7 @@ pub enum FF1Error {
     #[error("invalid char '{0}' at position {1}")]
     InvalidChar(char, usize),
     #[error("alphabet error: {0}")]
-    Alphabet(#[from] cyphera_alphabet::AlphabetError),
+    Alphabet(#[from] crate::alphabet::AlphabetError),
 }
 
 /// Trait to abstract over AES key sizes
@@ -367,7 +367,7 @@ mod tests {
     fn test_nist_sample_1() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3C").unwrap();
         let tweak = hex::decode("").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("0123456789").unwrap();
         assert_eq!(ct, "2433477484");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -379,7 +379,7 @@ mod tests {
     fn test_nist_sample_2() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3C").unwrap();
         let tweak = hex::decode("39383736353433323130").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("0123456789").unwrap();
         assert_eq!(ct, "6124200773");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -391,7 +391,7 @@ mod tests {
     fn test_nist_sample_3() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3C").unwrap();
         let tweak = hex::decode("3737373770717273373737").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::alphanumeric_lower()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::alphanumeric_lower()).unwrap();
         let ct = cipher.encrypt("0123456789abcdefghi").unwrap();
         assert_eq!(ct, "a9tv40mll9kdu509eum");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -403,7 +403,7 @@ mod tests {
     fn test_nist_sample_4() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F").unwrap();
         let tweak = hex::decode("").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("0123456789").unwrap();
         assert_eq!(ct, "2830668132");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -415,7 +415,7 @@ mod tests {
     fn test_nist_sample_5() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F").unwrap();
         let tweak = hex::decode("39383736353433323130").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("0123456789").unwrap();
         assert_eq!(ct, "2496655549");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -427,7 +427,7 @@ mod tests {
     fn test_nist_sample_6() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F").unwrap();
         let tweak = hex::decode("3737373770717273373737").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::alphanumeric_lower()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::alphanumeric_lower()).unwrap();
         let ct = cipher.encrypt("0123456789abcdefghi").unwrap();
         assert_eq!(ct, "xbj3kv35jrawxv32ysr");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -439,7 +439,7 @@ mod tests {
     fn test_nist_sample_7() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("0123456789").unwrap();
         assert_eq!(ct, "6657667009");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -451,7 +451,7 @@ mod tests {
     fn test_nist_sample_8() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("39383736353433323130").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("0123456789").unwrap();
         assert_eq!(ct, "1001623463");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -463,7 +463,7 @@ mod tests {
     fn test_nist_sample_9() {
         let key = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("3737373770717273373737").unwrap();
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::alphanumeric_lower()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::alphanumeric_lower()).unwrap();
         let ct = cipher.encrypt("0123456789abcdefghi").unwrap();
         assert_eq!(ct, "xs8a0azh2avyalyzuwd");
         let pt = cipher.decrypt(&ct).unwrap();
@@ -474,7 +474,7 @@ mod tests {
     fn test_roundtrip() {
         let key = vec![0u8; 16];
         let tweak = vec![];
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("1234567890").unwrap();
         let pt = cipher.decrypt(&ct).unwrap();
         assert_eq!(pt, "1234567890");
@@ -485,7 +485,7 @@ mod tests {
     fn test_deterministic() {
         let key = vec![0u8; 16];
         let tweak = vec![];
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let a = cipher.encrypt("12345").unwrap();
         let b = cipher.encrypt("12345").unwrap();
         assert_eq!(a, b);
@@ -495,7 +495,7 @@ mod tests {
     fn test_alphanumeric_roundtrip() {
         let key = vec![0u8; 32];
         let tweak = vec![];
-        let cipher = FF1::new(&key, &tweak, cyphera_alphabet::alphanumeric_lower()).unwrap();
+        let cipher = FF1::new(&key, &tweak, crate::alphabet::alphanumeric_lower()).unwrap();
         let ct = cipher.encrypt("hello123world").unwrap();
         let pt = cipher.decrypt(&ct).unwrap();
         assert_eq!(pt, "hello123world");

@@ -27,7 +27,7 @@ pub fn first_n(input: &str, n: usize, mask_char: char) -> String {
 }
 
 pub fn full(input: &str, mask_char: char) -> String {
-    input.chars().map(|c| if c.is_alphanumeric() { mask_char } else { c }).collect()
+    input.chars().map(|_| mask_char).collect()
 }
 
 #[cfg(test)]
@@ -45,7 +45,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_preserves_structure() {
-        assert_eq!(full("123-45-6789", '*'), "***-**-****");
+    fn test_full_masks_everything() {
+        assert_eq!(full("123-45-6789", '*'), "***********");
     }
 }

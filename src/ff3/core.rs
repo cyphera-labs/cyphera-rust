@@ -3,7 +3,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use num_bigint::BigUint;
 use num_traits::{Zero, One};
 use num_integer::Integer;
-use cyphera_alphabet::Alphabet;
+use crate::alphabet::Alphabet;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub enum FF3Error {
     PlaintextTooShort,
     PlaintextTooLong,
     InvalidChar(char, usize),
-    AlphabetError(cyphera_alphabet::AlphabetError),
+    AlphabetError(crate::alphabet::AlphabetError),
 }
 
 impl std::fmt::Display for FF3Error {
@@ -31,8 +31,8 @@ impl std::fmt::Display for FF3Error {
 
 impl std::error::Error for FF3Error {}
 
-impl From<cyphera_alphabet::AlphabetError> for FF3Error {
-    fn from(e: cyphera_alphabet::AlphabetError) -> Self {
+impl From<crate::alphabet::AlphabetError> for FF3Error {
+    fn from(e: crate::alphabet::AlphabetError) -> Self {
         Self::AlphabetError(e)
     }
 }
@@ -351,7 +351,7 @@ mod tests {
         let key = hex::decode(key_hex).unwrap();
         let tweak = hex::decode(tweak_hex).unwrap();
         let alphabet = match radix {
-            10 => cyphera_alphabet::digits(),
+            10 => crate::alphabet::digits(),
             26 => radix26(),
             _ => panic!("unsupported radix in test"),
         };
@@ -386,7 +386,7 @@ mod tests {
     fn test_roundtrip() {
         let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("D8E7920AFA330A73").unwrap();
-        let cipher = FF3::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF3::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let ct = cipher.encrypt("1234567890").unwrap();
         let pt = cipher.decrypt(&ct).unwrap();
         assert_eq!(pt, "1234567890");
@@ -397,7 +397,7 @@ mod tests {
     fn test_deterministic() {
         let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("D8E7920AFA330A73").unwrap();
-        let cipher = FF3::new(&key, &tweak, cyphera_alphabet::digits()).unwrap();
+        let cipher = FF3::new(&key, &tweak, crate::alphabet::digits()).unwrap();
         let a = cipher.encrypt("12345").unwrap();
         let b = cipher.encrypt("12345").unwrap();
         assert_eq!(a, b);
@@ -407,7 +407,7 @@ mod tests {
     fn test_alphanumeric_roundtrip() {
         let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("D8E7920AFA330A73").unwrap();
-        let cipher = FF3::new(&key, &tweak, cyphera_alphabet::alphanumeric_lower()).unwrap();
+        let cipher = FF3::new(&key, &tweak, crate::alphabet::alphanumeric_lower()).unwrap();
         let ct = cipher.encrypt("hello123").unwrap();
         let pt = cipher.decrypt(&ct).unwrap();
         assert_eq!(pt, "hello123");
@@ -415,14 +415,14 @@ mod tests {
 
     #[test]
     fn test_invalid_key() {
-        let result = FF3::new(&[0u8; 8], &[0u8; 8], cyphera_alphabet::digits());
+        let result = FF3::new(&[0u8; 8], &[0u8; 8], crate::alphabet::digits());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_invalid_tweak() {
         let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
-        let result = FF3::new(&key, &[0u8; 4], cyphera_alphabet::digits());
+        let result = FF3::new(&key, &[0u8; 4], crate::alphabet::digits());
         assert!(result.is_err());
     }
 }

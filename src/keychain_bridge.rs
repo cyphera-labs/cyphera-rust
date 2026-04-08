@@ -15,7 +15,7 @@
 //! The `key_ref` IS the keychain URI. Different policies can use different
 //! providers, regions, and keys — all resolved at runtime.
 
-use cyphera_keys::{KeyProvider, KeyRecord, KeyError, KeyStatus};
+use crate::keys::{KeyProvider, KeyRecord, KeyError, KeyStatus};
 use keychain::{KeyStore, KeychainError};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -176,7 +176,7 @@ policies:
     engine: ff1
     key_ref: "test://ssn-key"
 "#;
-        let pf = cyphera_policy::PolicyFile::from_yaml(yaml).unwrap();
+        let pf = crate::policy::PolicyFile::from_yaml(yaml).unwrap();
         let client = Client::from_policy(pf, Box::new(provider));
 
         // Encrypt using keychain-resolved key

@@ -15,7 +15,22 @@ pub struct PolicyEntry {
     pub alphabet: Option<String>,
     pub key_ref: Option<String>,
     pub tag: Option<String>,
-    pub mode: Option<String>,  // "deterministic" or "salted"
+    #[serde(default = "default_tag_enabled")]
+    pub tag_enabled: bool,
+    #[serde(default = "default_tag_length")]
+    pub tag_length: usize,
+    pub mode: Option<String>,
+    pub pattern: Option<String>,     // for mask engine
+    pub algorithm: Option<String>,   // for hash engine
+}
+
+fn default_tag_enabled() -> bool { true }
+fn default_tag_length() -> usize { 3 }
+
+impl PolicyEntry {
+    pub fn is_reversible(&self) -> bool {
+        matches!(self.engine.as_str(), "ff1" | "ff3" | "aes_gcm")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

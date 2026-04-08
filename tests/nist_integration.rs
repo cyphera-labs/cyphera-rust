@@ -1,138 +1,24 @@
 //! NIST test vectors running through the full Cyphera SDK.
 //!
-//! Proves the entire stack works: policy file → key resolution → engine dispatch
-//! → correct NIST output → decrypt roundtrip.
+//! Proves the entire stack works: policy file -> key resolution -> engine dispatch
+//! -> correct NIST output -> decrypt roundtrip.
 
-use cyphera::{Client, KeychainProvider};
+use cyphera::Client;
 use cyphera::keys::{MemoryProvider, KeyRecord, KeyStatus};
 use cyphera::policy::PolicyFile;
-use keychain::{KeyStore, KeyConfig};
-use keychain_env::EnvBackend;
-use std::collections::HashMap;
-
-// ── FF1 NIST vectors through SDK ────────────────────────────────────────
-
-fn ff1_policy_and_provider() -> (PolicyFile, Box<KeychainProvider>) {
-    let yaml = r#"
-policies:
-  ff1-128-digits:
-    engine: ff1
-    alphabet: digits
-    key_ref: ff1-128
-  ff1-128-digits-tweaked:
-    engine: ff1
-    alphabet: digits
-    key_ref: ff1-128-tweaked
-  ff1-128-base36:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: ff1-128-base36
-  ff1-192-digits:
-    engine: ff1
-    alphabet: digits
-    key_ref: ff1-192
-  ff1-192-digits-tweaked:
-    engine: ff1
-    alphabet: digits
-    key_ref: ff1-192-tweaked
-  ff1-192-base36:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: ff1-192-base36
-  ff1-256-digits:
-    engine: ff1
-    alphabet: digits
-    key_ref: ff1-256
-  ff1-256-digits-tweaked:
-    engine: ff1
-    alphabet: digits
-    key_ref: ff1-256-tweaked
-  ff1-256-base36:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: ff1-256-base36
-"#;
-    let pf = PolicyFile::from_yaml(yaml).unwrap();
-
-    let key128 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3C").unwrap();
-    let key192 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F").unwrap();
-    let key256 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
-    let tweak_empty = vec![];
-    let tweak_9 = hex::decode("39383736353433323130").unwrap();
-    let tweak_77 = hex::decode("3737373770717273373737").unwrap();
-
-    let store = KeyStore::new()
-        .register(Box::new(EnvBackend::new()))
-        .key("ff1-128", KeyConfig {
-            uri: "env://NIST_FF1_128".into(),
-            tweak: Some(tweak_empty.clone()),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-128-tweaked", KeyConfig {
-            uri: "env://NIST_FF1_128".into(),
-            tweak: Some(tweak_9.clone()),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-128-base36", KeyConfig {
-            uri: "env://NIST_FF1_128".into(),
-            tweak: Some(tweak_77.clone()),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-192", KeyConfig {
-            uri: "env://NIST_FF1_192".into(),
-            tweak: Some(tweak_empty.clone()),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-192-tweaked", KeyConfig {
-            uri: "env://NIST_FF1_192".into(),
-            tweak: Some(tweak_9.clone()),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-192-base36", KeyConfig {
-            uri: "env://NIST_FF1_192".into(),
-            tweak: Some(tweak_77.clone()),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-256", KeyConfig {
-            uri: "env://NIST_FF1_256".into(),
-            tweak: Some(tweak_empty),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-256-tweaked", KeyConfig {
-            uri: "env://NIST_FF1_256".into(),
-            tweak: Some(tweak_9),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        })
-        .key("ff1-256-base36", KeyConfig {
-            uri: "env://NIST_FF1_256".into(),
-            tweak: Some(tweak_77),
-            algorithm: None, version: None, metadata: HashMap::new(),
-        });
-
-    // Set env vars with raw key bytes
-    std::env::set_var("NIST_FF1_128", unsafe { String::from_utf8_unchecked(key128) });
-    std::env::set_var("NIST_FF1_192", unsafe { String::from_utf8_unchecked(key192) });
-    std::env::set_var("NIST_FF1_256", unsafe { String::from_utf8_unchecked(key256) });
-
-    let provider = KeychainProvider::new(store, vec![]);
-    (pf, Box::new(provider))
-}
-
-// Env backend with raw bytes is tricky for non-UTF8 keys.
-// Let's use MemoryProvider directly for NIST vectors — cleaner.
 
 fn ff1_client() -> Client {
     let yaml = r#"
 policies:
-  s1: { engine: ff1, alphabet: digits, key_ref: k128 }
-  s2: { engine: ff1, alphabet: digits, key_ref: k128-t9 }
-  s3: { engine: ff1, alphabet: alphanumeric, key_ref: k128-t77 }
-  s4: { engine: ff1, alphabet: digits, key_ref: k192 }
-  s5: { engine: ff1, alphabet: digits, key_ref: k192-t9 }
-  s6: { engine: ff1, alphabet: alphanumeric, key_ref: k192-t77 }
-  s7: { engine: ff1, alphabet: digits, key_ref: k256 }
-  s8: { engine: ff1, alphabet: digits, key_ref: k256-t9 }
-  s9: { engine: ff1, alphabet: alphanumeric, key_ref: k256-t77 }
+  s1: { engine: ff1, alphabet: digits, key_ref: k128, tag_enabled: false }
+  s2: { engine: ff1, alphabet: digits, key_ref: k128-t9, tag_enabled: false }
+  s3: { engine: ff1, alphabet: "0123456789abcdefghijklmnopqrstuvwxyz", key_ref: k128-t77, tag_enabled: false }
+  s4: { engine: ff1, alphabet: digits, key_ref: k192, tag_enabled: false }
+  s5: { engine: ff1, alphabet: digits, key_ref: k192-t9, tag_enabled: false }
+  s6: { engine: ff1, alphabet: "0123456789abcdefghijklmnopqrstuvwxyz", key_ref: k192-t77, tag_enabled: false }
+  s7: { engine: ff1, alphabet: digits, key_ref: k256, tag_enabled: false }
+  s8: { engine: ff1, alphabet: digits, key_ref: k256-t9, tag_enabled: false }
+  s9: { engine: ff1, alphabet: "0123456789abcdefghijklmnopqrstuvwxyz", key_ref: k256-t77, tag_enabled: false }
 "#;
     let pf = PolicyFile::from_yaml(yaml).unwrap();
 
@@ -155,24 +41,24 @@ policies:
         KeyRecord { key_ref: "k256-t77".into(), version: 1, status: KeyStatus::Active, material: key256, tweak: t_77 },
     ]);
 
-    Client::from_policy(pf, Box::new(provider))
+    Client::from_policy(pf, Box::new(provider)).unwrap()
 }
 
 fn ff3_client() -> Client {
     let yaml = r#"
 policies:
-  s1:  { engine: ff3, alphabet: digits, key_ref: k128-t1 }
-  s2:  { engine: ff3, alphabet: digits, key_ref: k128-t2 }
-  s3:  { engine: ff3, alphabet: digits, key_ref: k128-t1-long }
-  s4:  { engine: ff3, alphabet: digits, key_ref: k128-t0-long }
-  s6:  { engine: ff3, alphabet: digits, key_ref: k192-t1 }
-  s7:  { engine: ff3, alphabet: digits, key_ref: k192-t2 }
-  s8:  { engine: ff3, alphabet: digits, key_ref: k192-t1-long }
-  s9:  { engine: ff3, alphabet: digits, key_ref: k192-t0-long }
-  s11: { engine: ff3, alphabet: digits, key_ref: k256-t1 }
-  s12: { engine: ff3, alphabet: digits, key_ref: k256-t2 }
-  s13: { engine: ff3, alphabet: digits, key_ref: k256-t1-long }
-  s14: { engine: ff3, alphabet: digits, key_ref: k256-t0-long }
+  s1:  { engine: ff3, alphabet: digits, key_ref: k128-t1, tag_enabled: false }
+  s2:  { engine: ff3, alphabet: digits, key_ref: k128-t2, tag_enabled: false }
+  s3:  { engine: ff3, alphabet: digits, key_ref: k128-t1-long, tag_enabled: false }
+  s4:  { engine: ff3, alphabet: digits, key_ref: k128-t0-long, tag_enabled: false }
+  s6:  { engine: ff3, alphabet: digits, key_ref: k192-t1, tag_enabled: false }
+  s7:  { engine: ff3, alphabet: digits, key_ref: k192-t2, tag_enabled: false }
+  s8:  { engine: ff3, alphabet: digits, key_ref: k192-t1-long, tag_enabled: false }
+  s9:  { engine: ff3, alphabet: digits, key_ref: k192-t0-long, tag_enabled: false }
+  s11: { engine: ff3, alphabet: digits, key_ref: k256-t1, tag_enabled: false }
+  s12: { engine: ff3, alphabet: digits, key_ref: k256-t2, tag_enabled: false }
+  s13: { engine: ff3, alphabet: digits, key_ref: k256-t1-long, tag_enabled: false }
+  s14: { engine: ff3, alphabet: digits, key_ref: k256-t0-long, tag_enabled: false }
 "#;
     let pf = PolicyFile::from_yaml(yaml).unwrap();
 
@@ -198,10 +84,10 @@ policies:
         KeyRecord { key_ref: "k256-t0-long".into(), version: 1, status: KeyStatus::Active, material: key256, tweak: t0 },
     ]);
 
-    Client::from_policy(pf, Box::new(provider))
+    Client::from_policy(pf, Box::new(provider)).unwrap()
 }
 
-// ── FF1 NIST Samples via SDK ────────────────────────────────────────────
+// -- FF1 NIST Samples via SDK --
 
 #[test] fn ff1_nist_s1() { let c = ff1_client(); assert_sdk(&c, "s1", "0123456789", "2433477484"); }
 #[test] fn ff1_nist_s2() { let c = ff1_client(); assert_sdk(&c, "s2", "0123456789", "6124200773"); }
@@ -213,7 +99,7 @@ policies:
 #[test] fn ff1_nist_s8() { let c = ff1_client(); assert_sdk(&c, "s8", "0123456789", "1001623463"); }
 #[test] fn ff1_nist_s9() { let c = ff1_client(); assert_sdk(&c, "s9", "0123456789abcdefghi", "xs8a0azh2avyalyzuwd"); }
 
-// ── FF3 NIST Samples via SDK ────────────────────────────────────────────
+// -- FF3 NIST Samples via SDK --
 
 #[test] fn ff3_nist_s1()  { let c = ff3_client(); assert_sdk(&c, "s1",  "890121234567890000", "750918814058654607"); }
 #[test] fn ff3_nist_s2()  { let c = ff3_client(); assert_sdk(&c, "s2",  "890121234567890000", "018989839189395384"); }
@@ -228,7 +114,7 @@ policies:
 #[test] fn ff3_nist_s13() { let c = ff3_client(); assert_sdk(&c, "s13", "89012123456789000000789000000", "04344343235792599165734622699"); }
 #[test] fn ff3_nist_s14() { let c = ff3_client(); assert_sdk(&c, "s14", "89012123456789000000789000000", "30859239999374053872365555822"); }
 
-// ── Helper ──────────────────────────────────────────────────────────────
+// -- Helper --
 
 fn assert_sdk(client: &Client, policy: &str, plaintext: &str, expected_ct: &str) {
     // Encrypt via SDK
