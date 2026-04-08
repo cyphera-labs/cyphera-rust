@@ -39,10 +39,6 @@ pub struct PolicyFile {
 }
 
 impl PolicyFile {
-    pub fn from_yaml(yaml: &str) -> Result<Self, PolicyError> {
-        serde_yaml::from_str(yaml).map_err(|e| PolicyError::ParseError(e.to_string()))
-    }
-
     pub fn from_json(json: &str) -> Result<Self, PolicyError> {
         serde_json::from_str(json).map_err(|e| PolicyError::ParseError(e.to_string()))
     }
@@ -59,20 +55,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_yaml() {
-        let yaml = r#"
-policies:
-  ssn:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: primary
-    tag: ssn
-  card:
-    engine: ff3
-    alphabet: digits
-    key_ref: payment
-"#;
-        let pf = PolicyFile::from_yaml(yaml).unwrap();
+    fn test_parse_json() {
+        let json = r#"{"policies":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"primary","tag":"ssn"},"card":{"engine":"ff3","alphabet":"digits","key_ref":"payment"}}}"#;
+        let pf = PolicyFile::from_json(json).unwrap();
         assert_eq!(pf.policies.len(), 2);
         let ssn = pf.get("ssn").unwrap();
         assert_eq!(ssn.engine, "ff1");

@@ -8,19 +8,18 @@ use cyphera::keys::{MemoryProvider, KeyRecord, KeyStatus};
 use cyphera::policy::PolicyFile;
 
 fn ff1_client() -> Client {
-    let yaml = r#"
-policies:
-  s1: { engine: ff1, alphabet: digits, key_ref: k128, tag_enabled: false }
-  s2: { engine: ff1, alphabet: digits, key_ref: k128-t9, tag_enabled: false }
-  s3: { engine: ff1, alphabet: "0123456789abcdefghijklmnopqrstuvwxyz", key_ref: k128-t77, tag_enabled: false }
-  s4: { engine: ff1, alphabet: digits, key_ref: k192, tag_enabled: false }
-  s5: { engine: ff1, alphabet: digits, key_ref: k192-t9, tag_enabled: false }
-  s6: { engine: ff1, alphabet: "0123456789abcdefghijklmnopqrstuvwxyz", key_ref: k192-t77, tag_enabled: false }
-  s7: { engine: ff1, alphabet: digits, key_ref: k256, tag_enabled: false }
-  s8: { engine: ff1, alphabet: digits, key_ref: k256-t9, tag_enabled: false }
-  s9: { engine: ff1, alphabet: "0123456789abcdefghijklmnopqrstuvwxyz", key_ref: k256-t77, tag_enabled: false }
-"#;
-    let pf = PolicyFile::from_yaml(yaml).unwrap();
+    let json = r#"{"policies":{
+        "s1":{"engine":"ff1","alphabet":"digits","key_ref":"k128","tag_enabled":false},
+        "s2":{"engine":"ff1","alphabet":"digits","key_ref":"k128-t9","tag_enabled":false},
+        "s3":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k128-t77","tag_enabled":false},
+        "s4":{"engine":"ff1","alphabet":"digits","key_ref":"k192","tag_enabled":false},
+        "s5":{"engine":"ff1","alphabet":"digits","key_ref":"k192-t9","tag_enabled":false},
+        "s6":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k192-t77","tag_enabled":false},
+        "s7":{"engine":"ff1","alphabet":"digits","key_ref":"k256","tag_enabled":false},
+        "s8":{"engine":"ff1","alphabet":"digits","key_ref":"k256-t9","tag_enabled":false},
+        "s9":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k256-t77","tag_enabled":false}
+    }}"#;
+    let pf = PolicyFile::from_json(json).unwrap();
 
     let key128 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3C").unwrap();
     let key192 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F").unwrap();
@@ -45,22 +44,21 @@ policies:
 }
 
 fn ff3_client() -> Client {
-    let yaml = r#"
-policies:
-  s1:  { engine: ff3, alphabet: digits, key_ref: k128-t1, tag_enabled: false }
-  s2:  { engine: ff3, alphabet: digits, key_ref: k128-t2, tag_enabled: false }
-  s3:  { engine: ff3, alphabet: digits, key_ref: k128-t1-long, tag_enabled: false }
-  s4:  { engine: ff3, alphabet: digits, key_ref: k128-t0-long, tag_enabled: false }
-  s6:  { engine: ff3, alphabet: digits, key_ref: k192-t1, tag_enabled: false }
-  s7:  { engine: ff3, alphabet: digits, key_ref: k192-t2, tag_enabled: false }
-  s8:  { engine: ff3, alphabet: digits, key_ref: k192-t1-long, tag_enabled: false }
-  s9:  { engine: ff3, alphabet: digits, key_ref: k192-t0-long, tag_enabled: false }
-  s11: { engine: ff3, alphabet: digits, key_ref: k256-t1, tag_enabled: false }
-  s12: { engine: ff3, alphabet: digits, key_ref: k256-t2, tag_enabled: false }
-  s13: { engine: ff3, alphabet: digits, key_ref: k256-t1-long, tag_enabled: false }
-  s14: { engine: ff3, alphabet: digits, key_ref: k256-t0-long, tag_enabled: false }
-"#;
-    let pf = PolicyFile::from_yaml(yaml).unwrap();
+    let json = r#"{"policies":{
+        "s1":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t1","tag_enabled":false},
+        "s2":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t2","tag_enabled":false},
+        "s3":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t1-long","tag_enabled":false},
+        "s4":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t0-long","tag_enabled":false},
+        "s6":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t1","tag_enabled":false},
+        "s7":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t2","tag_enabled":false},
+        "s8":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t1-long","tag_enabled":false},
+        "s9":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t0-long","tag_enabled":false},
+        "s11":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t1","tag_enabled":false},
+        "s12":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t2","tag_enabled":false},
+        "s13":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t1-long","tag_enabled":false},
+        "s14":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t0-long","tag_enabled":false}
+    }}"#;
+    let pf = PolicyFile::from_json(json).unwrap();
 
     let key128 = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
     let key192 = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6").unwrap();

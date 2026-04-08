@@ -82,13 +82,13 @@ impl Client {
         Ok(index)
     }
 
-    /// Create a client from a YAML policy file on disk
-    pub fn from_policy_file(
+    /// Create a client from a JSON policy file on disk.
+    pub fn from_file(
         path: &str,
         key_provider: Box<dyn KeyProvider>,
     ) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        let pf = PolicyFile::from_yaml(&contents)?;
+        let pf = PolicyFile::from_json(&contents)?;
         let policies = pf.policies;
         let tag_index = Self::validate_and_build_tag_index(&policies)?;
         Ok(Self {
@@ -400,7 +400,7 @@ impl ClientBuilder {
 
     pub fn policy_file(mut self, path: &str) -> std::result::Result<Self, CypheraError> {
         let contents = std::fs::read_to_string(path)?;
-        let pf = PolicyFile::from_yaml(&contents)?;
+        let pf = PolicyFile::from_json(&contents)?;
         self.policies = pf.policies;
         Ok(self)
     }
@@ -464,40 +464,8 @@ mod tests {
     }
 
     fn test_client() -> Client {
-        let yaml = r#"
-policies:
-  ssn:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: k1
-    tag: s01
-  card:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: k1
-    tag: c01
-  phone:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: k1
-    tag: h01
-  dob:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: k1
-    tag: d01
-  name:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: k1
-    tag: n01
-  general:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: k1
-    tag: g01
-"#;
-        let pf = PolicyFile::from_yaml(yaml).unwrap();
+        let json = r#"{"policies":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"s01"},"card":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"c01"},"phone":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"h01"},"dob":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"d01"},"name":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"n01"},"general":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"g01"}}}"#;
+        let pf = PolicyFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
@@ -637,21 +605,9 @@ policies:
     // ── Policy-driven ───────────────────────────────────────────────────
 
     #[test]
-    fn test_policy_from_yaml() {
-        let yaml = r#"
-policies:
-  ssn:
-    engine: ff1
-    alphabet: alphanumeric
-    key_ref: mykey
-    tag_enabled: false
-  card:
-    engine: ff3
-    alphabet: digits
-    key_ref: mykey
-    tag_enabled: false
-"#;
-        let pf = PolicyFile::from_yaml(yaml).unwrap();
+    fn test_policy_from_json() {
+        let json = r#"{"policies":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"mykey","tag_enabled":false},"card":{"engine":"ff3","alphabet":"digits","key_ref":"mykey","tag_enabled":false}}}"#;
+        let pf = PolicyFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "mykey".into(),
@@ -692,15 +648,8 @@ policies:
 
     #[test]
     fn test_protect_with_mask_policy() {
-        let yaml = r#"
-policies:
-  ssn_display:
-    engine: mask
-    pattern: last4
-    tag_enabled: false
-    key_ref: k1
-"#;
-        let pf = PolicyFile::from_yaml(yaml).unwrap();
+        let json = r#"{"policies":{"ssn_display":{"engine":"mask","pattern":"last4","tag_enabled":false,"key_ref":"k1"}}}"#;
+        let pf = PolicyFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
@@ -718,14 +667,8 @@ policies:
 
     #[test]
     fn test_protect_with_hash_policy() {
-        let yaml = r#"
-policies:
-  ssn_token:
-    engine: hash
-    key_ref: k1
-    tag_enabled: false
-"#;
-        let pf = PolicyFile::from_yaml(yaml).unwrap();
+        let json = r#"{"policies":{"ssn_token":{"engine":"hash","key_ref":"k1","tag_enabled":false}}}"#;
+        let pf = PolicyFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
@@ -767,14 +710,8 @@ policies:
             },
         ]);
 
-        let yaml = r#"
-policies:
-  ssn:
-    engine: ff1
-    key_ref: k1
-    tag_enabled: false
-"#;
-        let pf = PolicyFile::from_yaml(yaml).unwrap();
+        let json = r#"{"policies":{"ssn":{"engine":"ff1","key_ref":"k1","tag_enabled":false}}}"#;
+        let pf = PolicyFile::from_json(json).unwrap();
 
         let client = Client::builder()
             .policy(pf)

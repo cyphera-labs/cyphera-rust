@@ -2,7 +2,7 @@
 //!
 //! This lets you use keychain URIs directly in policy files:
 //!
-//! ```yaml
+//! ```json
 //! policies:
 //!   ssn-east:
 //!     engine: ff1
@@ -170,13 +170,8 @@ mod tests {
 
         let provider = KeychainProvider::new(store, vec![0u8; 8]);
 
-        let yaml = r#"
-policies:
-  ssn:
-    engine: ff1
-    key_ref: "test://ssn-key"
-"#;
-        let pf = crate::policy::PolicyFile::from_yaml(yaml).unwrap();
+        let json = r#"{"policies":{"ssn":{"engine":"ff1","key_ref":"test://ssn-key","tag_enabled":false}}}"#;
+        let pf = crate::policy::PolicyFile::from_json(json).unwrap();
         let client = Client::from_policy(pf, Box::new(provider));
 
         // Encrypt using keychain-resolved key
