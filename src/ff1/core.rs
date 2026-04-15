@@ -70,6 +70,8 @@ impl FF1 {
         })
     }
 
+    // NIST SP 800-38G requires AES-ECB as the PRF for FF1/FF3 Feistel rounds.
+    // This is single-block encryption used as a building block, not ECB mode applied to user data.
     fn create_aes(key: &[u8]) -> Result<Box<dyn AesEncryptor>, FF1Error> {
         match key.len() {
             16 => Ok(Box::new(Aes128Enc(Aes128::new_from_slice(key).unwrap()))),
