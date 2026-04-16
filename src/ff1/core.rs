@@ -145,7 +145,7 @@ impl FF1 {
         let mut b: Vec<usize> = plaintext[u..].to_vec();
 
         let b_bytes = self.compute_b(v);
-        let d = 4 * ((b_bytes + 3) / 4) + 4;
+        let d = 4 * (b_bytes.div_ceil(4)) + 4;
         let p = self.build_p(radix, u, n, tweak.len());
 
         for i in 0..10 {
@@ -187,7 +187,7 @@ impl FF1 {
         let mut b: Vec<usize> = ciphertext[u..].to_vec();
 
         let b_bytes = self.compute_b(v);
-        let d = 4 * ((b_bytes + 3) / 4) + 4;
+        let d = 4 * (b_bytes.div_ceil(4)) + 4;
         let p = self.build_p(radix, u, n, tweak.len());
 
         for i in (0..10).rev() {

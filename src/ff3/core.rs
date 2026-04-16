@@ -169,7 +169,7 @@ impl FF3 {
 
     fn ff3_encrypt(&self, plaintext: &[usize], tweak: &[u8]) -> Vec<usize> {
         let n = plaintext.len();
-        let u = (n + 1) / 2;
+        let u = n.div_ceil(2);
         let v = n - u;
 
         let mut a = plaintext[..u].to_vec();
@@ -208,7 +208,7 @@ impl FF3 {
 
     fn ff3_decrypt(&self, ciphertext: &[usize], tweak: &[u8]) -> Vec<usize> {
         let n = ciphertext.len();
-        let u = (n + 1) / 2;
+        let u = n.div_ceil(2);
         let v = n - u;
 
         let mut a = ciphertext[..u].to_vec();

@@ -1,3 +1,5 @@
+#![allow(clippy::manual_is_multiple_of)]
+
 pub mod alphabet;
 pub mod ff1;
 pub mod ff3;
