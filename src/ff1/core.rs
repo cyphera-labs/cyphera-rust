@@ -92,6 +92,7 @@ impl FF1 {
             .collect()
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_digits(&self, digits: &[usize]) -> String {
         digits.iter().map(|&d| self.alpha[d]).collect()
     }
@@ -235,7 +236,7 @@ impl FF1 {
         }
         pow -= BigUint::from(1u32);
         let bits = if pow.is_zero() { 1 } else { pow.bits() as usize };
-        (bits + 7) / 8
+        bits.div_ceil(8)
     }
 
     /// Build P block (16 bytes) per step 3
@@ -260,11 +261,11 @@ impl FF1 {
         let pad = (16 - ((t + 1 + b) % 16)) % 16;
         let mut q = Vec::with_capacity(t + pad + 1 + b);
         q.extend_from_slice(tweak);
-        q.extend(std::iter::repeat(0u8).take(pad));
+        q.extend(std::iter::repeat_n(0u8,pad));
         q.push(i as u8);
         // Pad num_bytes to b length
         if num_bytes.len() < b {
-            q.extend(std::iter::repeat(0u8).take(b - num_bytes.len()));
+            q.extend(std::iter::repeat_n(0u8,b - num_bytes.len()));
         }
         let start = if num_bytes.len() > b { num_bytes.len() - b } else { 0 };
         q.extend_from_slice(&num_bytes[start..]);
@@ -288,7 +289,7 @@ impl FF1 {
 
     /// Expand R to d bytes per NIST SP 800-38G: S = R || AES(R ⊕ [1]) || AES(R ⊕ [2]) || ...
     fn expand_s(&self, r: &[u8; 16], d: usize) -> Vec<u8> {
-        let need_blocks = (d + 15) / 16;
+        let need_blocks = d.div_ceil(16);
         let mut out = Vec::with_capacity(need_blocks * 16);
         out.extend_from_slice(r);
         for j in 1..need_blocks {

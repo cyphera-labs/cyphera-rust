@@ -122,6 +122,7 @@ impl FF3 {
             .collect()
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_digits(&self, digits: &[usize]) -> String {
         digits.iter().map(|&d| self.alpha[d]).collect()
     }
