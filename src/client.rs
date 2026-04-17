@@ -304,7 +304,7 @@ impl Client {
     /// Tags are checked longest-first to prevent prefix collisions.
     pub fn access_by_tag(&self, value: &str) -> Result<ProtectResult> {
         let mut tags: Vec<_> = self.tag_index.iter().collect();
-        tags.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        tags.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
         for (tag, policy_name) in tags {
             if value.starts_with(tag.as_str()) {
                 return self.access(policy_name, value);
