@@ -12,7 +12,7 @@ categories = ["cryptography", "encoding"]
 
 [dependencies]
 aes = "0.8"
-ctr = "0.9"
+ctr = "0.10"
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
