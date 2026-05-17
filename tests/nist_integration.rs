@@ -1,25 +1,25 @@
 //! NIST test vectors running through the full Cyphera SDK.
 //!
-//! Proves the entire stack works: policy file -> key resolution -> engine dispatch
+//! Proves the entire stack works: configuration file -> key resolution -> engine dispatch
 //! -> correct NIST output -> decrypt roundtrip.
 
 use cyphera::Client;
 use cyphera::keys::{MemoryProvider, KeyRecord, KeyStatus};
-use cyphera::policy::PolicyFile;
+use cyphera::configuration::ConfigurationFile;
 
 fn ff1_client() -> Client {
-    let json = r#"{"policies":{
-        "s1":{"engine":"ff1","alphabet":"digits","key_ref":"k128","tag_enabled":false},
-        "s2":{"engine":"ff1","alphabet":"digits","key_ref":"k128-t9","tag_enabled":false},
-        "s3":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k128-t77","tag_enabled":false},
-        "s4":{"engine":"ff1","alphabet":"digits","key_ref":"k192","tag_enabled":false},
-        "s5":{"engine":"ff1","alphabet":"digits","key_ref":"k192-t9","tag_enabled":false},
-        "s6":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k192-t77","tag_enabled":false},
-        "s7":{"engine":"ff1","alphabet":"digits","key_ref":"k256","tag_enabled":false},
-        "s8":{"engine":"ff1","alphabet":"digits","key_ref":"k256-t9","tag_enabled":false},
-        "s9":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k256-t77","tag_enabled":false}
+    let json = r#"{"configurations":{
+        "s1":{"engine":"ff1","alphabet":"digits","key_ref":"k128","header_enabled":false},
+        "s2":{"engine":"ff1","alphabet":"digits","key_ref":"k128-t9","header_enabled":false},
+        "s3":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k128-t77","header_enabled":false},
+        "s4":{"engine":"ff1","alphabet":"digits","key_ref":"k192","header_enabled":false},
+        "s5":{"engine":"ff1","alphabet":"digits","key_ref":"k192-t9","header_enabled":false},
+        "s6":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k192-t77","header_enabled":false},
+        "s7":{"engine":"ff1","alphabet":"digits","key_ref":"k256","header_enabled":false},
+        "s8":{"engine":"ff1","alphabet":"digits","key_ref":"k256-t9","header_enabled":false},
+        "s9":{"engine":"ff1","alphabet":"0123456789abcdefghijklmnopqrstuvwxyz","key_ref":"k256-t77","header_enabled":false}
     }}"#;
-    let pf = PolicyFile::from_json(json).unwrap();
+    let pf = ConfigurationFile::from_json(json).unwrap();
 
     let key128 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3C").unwrap();
     let key192 = hex::decode("2B7E151628AED2A6ABF7158809CF4F3CEF4359D8D580AA4F").unwrap();
@@ -40,25 +40,25 @@ fn ff1_client() -> Client {
         KeyRecord { key_ref: "k256-t77".into(), version: 1, status: KeyStatus::Active, material: key256, tweak: t_77 },
     ]);
 
-    Client::from_policy(pf, Box::new(provider)).unwrap()
+    Client::from_configuration(pf, Box::new(provider)).unwrap()
 }
 
 fn ff3_client() -> Client {
-    let json = r#"{"policies":{
-        "s1":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t1","tag_enabled":false},
-        "s2":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t2","tag_enabled":false},
-        "s3":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t1-long","tag_enabled":false},
-        "s4":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t0-long","tag_enabled":false},
-        "s6":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t1","tag_enabled":false},
-        "s7":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t2","tag_enabled":false},
-        "s8":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t1-long","tag_enabled":false},
-        "s9":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t0-long","tag_enabled":false},
-        "s11":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t1","tag_enabled":false},
-        "s12":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t2","tag_enabled":false},
-        "s13":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t1-long","tag_enabled":false},
-        "s14":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t0-long","tag_enabled":false}
+    let json = r#"{"configurations":{
+        "s1":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t1","header_enabled":false},
+        "s2":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t2","header_enabled":false},
+        "s3":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t1-long","header_enabled":false},
+        "s4":{"engine":"ff3","alphabet":"digits","key_ref":"k128-t0-long","header_enabled":false},
+        "s6":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t1","header_enabled":false},
+        "s7":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t2","header_enabled":false},
+        "s8":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t1-long","header_enabled":false},
+        "s9":{"engine":"ff3","alphabet":"digits","key_ref":"k192-t0-long","header_enabled":false},
+        "s11":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t1","header_enabled":false},
+        "s12":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t2","header_enabled":false},
+        "s13":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t1-long","header_enabled":false},
+        "s14":{"engine":"ff3","alphabet":"digits","key_ref":"k256-t0-long","header_enabled":false}
     }}"#;
-    let pf = PolicyFile::from_json(json).unwrap();
+    let pf = ConfigurationFile::from_json(json).unwrap();
 
     let key128 = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
     let key192 = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6").unwrap();
@@ -82,7 +82,7 @@ fn ff3_client() -> Client {
         KeyRecord { key_ref: "k256-t0-long".into(), version: 1, status: KeyStatus::Active, material: key256, tweak: t0 },
     ]);
 
-    Client::from_policy(pf, Box::new(provider)).unwrap()
+    Client::from_configuration(pf, Box::new(provider)).unwrap()
 }
 
 // -- FF1 NIST Samples via SDK --
@@ -114,18 +114,18 @@ fn ff3_client() -> Client {
 
 // -- Helper --
 
-fn assert_sdk(client: &Client, policy: &str, plaintext: &str, expected_ct: &str) {
+fn assert_sdk(client: &Client, configuration: &str, plaintext: &str, expected_ct: &str) {
     // Encrypt via SDK
-    let ct = client.encrypt(policy, plaintext)
-        .unwrap_or_else(|e| panic!("encrypt({policy}, {plaintext}) failed: {e}"));
+    let ct = client.encrypt(configuration, plaintext)
+        .unwrap_or_else(|e| panic!("encrypt({configuration}, {plaintext}) failed: {e}"));
     assert_eq!(ct.output, expected_ct,
-        "NIST vector mismatch for policy '{policy}': encrypt('{plaintext}') = '{}', expected '{expected_ct}'",
+        "NIST vector mismatch for configuration '{configuration}': encrypt('{plaintext}') = '{}', expected '{expected_ct}'",
         ct.output);
 
     // Decrypt roundtrip
-    let pt = client.decrypt(policy, &ct.output)
-        .unwrap_or_else(|e| panic!("decrypt({policy}, {}) failed: {e}", ct.output));
+    let pt = client.decrypt(configuration, &ct.output)
+        .unwrap_or_else(|e| panic!("decrypt({configuration}, {}) failed: {e}", ct.output));
     assert_eq!(pt.output, plaintext,
-        "Roundtrip failed for policy '{policy}': decrypt('{}') = '{}', expected '{plaintext}'",
+        "Roundtrip failed for configuration '{configuration}': decrypt('{}') = '{}', expected '{plaintext}'",
         ct.output, pt.output);
 }

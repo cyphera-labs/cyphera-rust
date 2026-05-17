@@ -1,7 +1,7 @@
 use crate::alphabet::Alphabet;
 use crate::audit::{AuditEvent, AuditLogger, NoopLogger};
 use crate::keys::{KeyProvider, KeyRecord};
-use crate::policy::{PolicyFile, PolicyEntry};
+use crate::configuration::{ConfigurationFile, Configuration};
 use thiserror::Error;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -10,12 +10,12 @@ use crate::format;
 
 #[derive(Error, Debug)]
 pub enum CypheraError {
-    #[error("policy not found: {0}")]
-    PolicyNotFound(String),
+    #[error("configuration not found: {0}")]
+    ConfigurationNotFound(String),
     #[error("key error: {0}")]
     Key(#[from] crate::keys::KeyError),
-    #[error("policy error: {0}")]
-    Policy(#[from] crate::policy::PolicyError),
+    #[error("configuration error: {0}")]
+    Policy(#[from] crate::configuration::ConfigurationError),
     #[error("ff1 error: {0}")]
     FF1(#[from] crate::ff1::FF1Error),
     #[error("ff3 error: {0}")]
@@ -37,7 +37,7 @@ pub type Result<T> = std::result::Result<T, CypheraError>;
 #[derive(Debug, Clone)]
 pub struct ProtectResult {
     pub output: String,
-    pub policy_name: String,
+    pub configuration_name: String,
     pub engine: String,
     pub key_ref: Option<String>,
     pub key_version: Option<u32>,
@@ -46,35 +46,35 @@ pub struct ProtectResult {
 
 /// The main Cyphera client. This is what developers use.
 pub struct Client {
-    policies: HashMap<String, PolicyEntry>,
-    tag_index: HashMap<String, String>, // tag → policy name
+    configurations: HashMap<String, Configuration>,
+    header_index: HashMap<String, String>, // header → configuration name
     key_provider: Arc<dyn KeyProvider>,
     logger: Arc<dyn AuditLogger>,
     default_key_ref: Option<String>,
 }
 
 impl Client {
-    /// Validate policies and build tag index. Errors on:
-    /// - tag_enabled=true with no tag specified
-    /// - duplicate tags across policies
-    fn validate_and_build_tag_index(policies: &HashMap<String, PolicyEntry>) -> Result<HashMap<String, String>> {
+    /// Validate configurations and build header index. Errors on:
+    /// - header_enabled=true with no header specified
+    /// - duplicate headers across configurations
+    fn validate_and_build_header_index(configurations: &HashMap<String, Configuration>) -> Result<HashMap<String, String>> {
         let mut index = HashMap::new();
-        for (name, policy) in policies.iter() {
-            if policy.tag_enabled {
-                match &policy.tag {
-                    None => return Err(CypheraError::PolicyNotFound(
-                        format!("policy '{}' has tag_enabled=true but no tag specified", name)
+        for (name, configuration) in configurations.iter() {
+            if configuration.header_enabled {
+                match &configuration.header {
+                    None => return Err(CypheraError::ConfigurationNotFound(
+                        format!("configuration '{}' has header_enabled=true but no header specified", name)
                     )),
-                    Some(tag) if tag.is_empty() => return Err(CypheraError::PolicyNotFound(
-                        format!("policy '{}' has tag_enabled=true but tag is empty", name)
+                    Some(header) if header.is_empty() => return Err(CypheraError::ConfigurationNotFound(
+                        format!("configuration '{}' has header_enabled=true but header is empty", name)
                     )),
-                    Some(tag) => {
-                        if let Some(existing) = index.get(tag) {
-                            return Err(CypheraError::PolicyNotFound(
-                                format!("tag collision: '{}' used by both '{}' and '{}'", tag, existing, name)
+                    Some(header) => {
+                        if let Some(existing) = index.get(header) {
+                            return Err(CypheraError::ConfigurationNotFound(
+                                format!("header collision: '{}' used by both '{}' and '{}'", header, existing, name)
                             ));
                         }
-                        index.insert(tag.clone(), name.clone());
+                        index.insert(header.clone(), name.clone());
                     }
                 }
             }
@@ -82,34 +82,34 @@ impl Client {
         Ok(index)
     }
 
-    /// Create a client from a JSON policy file on disk.
+    /// Create a client from a JSON configuration file on disk.
     pub fn from_file(
         path: &str,
         key_provider: Box<dyn KeyProvider>,
     ) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        let pf = PolicyFile::from_json(&contents)?;
-        let policies = pf.policies;
-        let tag_index = Self::validate_and_build_tag_index(&policies)?;
+        let pf = ConfigurationFile::from_json(&contents)?;
+        let configurations = pf.configurations;
+        let header_index = Self::validate_and_build_header_index(&configurations)?;
         Ok(Self {
-            policies,
-            tag_index,
+            configurations,
+            header_index,
             key_provider: Arc::from(key_provider),
             logger: Arc::new(NoopLogger),
             default_key_ref: None,
         })
     }
 
-    /// Create a client from a PolicyFile struct
-    pub fn from_policy(
-        policy: PolicyFile,
+    /// Create a client from a ConfigurationFile struct
+    pub fn from_configuration(
+        configuration: ConfigurationFile,
         key_provider: Box<dyn KeyProvider>,
     ) -> Result<Self> {
-        let policies = policy.policies;
-        let tag_index = Self::validate_and_build_tag_index(&policies)?;
+        let configurations = configuration.configurations;
+        let header_index = Self::validate_and_build_header_index(&configurations)?;
         Ok(Self {
-            policies,
-            tag_index,
+            configurations,
+            header_index,
             key_provider: Arc::from(key_provider),
             logger: Arc::new(NoopLogger),
             default_key_ref: None,
@@ -123,26 +123,26 @@ impl Client {
 
     // ── Public API ──────────────────────────────────────────────────────
 
-    /// Encrypt a value using the named policy.
+    /// Encrypt a value using the named configuration.
     /// Structural characters (dashes, slashes, etc.) are preserved.
-    /// Tag is prepended to the final output if tag_enabled.
-    pub fn encrypt(&self, policy_name: &str, plaintext: &str) -> Result<ProtectResult> {
-        let policy = self.get_policy(policy_name)?;
-        let alphabet = self.resolve_alphabet(&policy);
-        let key = self.resolve_key(&policy)?;
+    /// Tag is prepended to the final output if header_enabled.
+    pub fn encrypt(&self, configuration_name: &str, plaintext: &str) -> Result<ProtectResult> {
+        let configuration = self.get_configuration(configuration_name)?;
+        let alphabet = self.resolve_alphabet(&configuration);
+        let key = self.resolve_key(&configuration)?;
 
         // 1. Strip passthroughs
         let (extracted, template) = format::extract(plaintext, &alphabet);
 
         // 2. Validate
         if extracted.is_empty() {
-            return Err(CypheraError::PolicyNotFound(
+            return Err(CypheraError::ConfigurationNotFound(
                 "no encryptable characters in input".to_string()
             ));
         }
 
         // 3. Encrypt
-        let encrypted = match policy.engine.as_str() {
+        let encrypted = match configuration.engine.as_str() {
             "ff1" => {
                 let cipher = crate::ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
@@ -157,45 +157,45 @@ impl Client {
         // 3. Reinsert passthroughs
         let with_passthroughs = format::reconstruct(&encrypted, &template);
 
-        // 4. Prepend tag
-        let output = if policy.tag_enabled {
-            let tag = policy.tag.as_deref().unwrap_or("");
-            format!("{}{}", tag, with_passthroughs)
+        // 4. Prepend header
+        let output = if configuration.header_enabled {
+            let header = configuration.header.as_deref().unwrap_or("");
+            format!("{}{}", header, with_passthroughs)
         } else {
             with_passthroughs
         };
 
-        self.log_event(policy_name, "encrypt", &policy.engine, &key, true);
+        self.log_event(configuration_name, "encrypt", &configuration.engine, &key, true);
 
         Ok(ProtectResult {
             output,
-            policy_name: policy_name.to_string(),
-            engine: policy.engine.clone(),
+            configuration_name: configuration_name.to_string(),
+            engine: configuration.engine.clone(),
             key_ref: Some(key.key_ref.clone()),
             key_version: Some(key.version),
             reversible: true,
         })
     }
 
-    /// Decrypt a value using the named policy. Strips tag if present.
-    pub fn decrypt(&self, policy_name: &str, ciphertext: &str) -> Result<ProtectResult> {
-        let policy = self.get_policy(policy_name)?;
-        let alphabet = self.resolve_alphabet(&policy);
-        let key = self.resolve_key(&policy)?;
+    /// Decrypt a value using the named configuration. Strips header if present.
+    pub fn decrypt(&self, configuration_name: &str, ciphertext: &str) -> Result<ProtectResult> {
+        let configuration = self.get_configuration(configuration_name)?;
+        let alphabet = self.resolve_alphabet(&configuration);
+        let key = self.resolve_key(&configuration)?;
 
-        // 1. Strip tag
-        let without_tag = if policy.tag_enabled {
-            let tag_len = policy.tag.as_ref().map(|t| t.len()).unwrap_or(0);
-            &ciphertext[tag_len..]
+        // 1. Strip header
+        let without_header = if configuration.header_enabled {
+            let header_len = configuration.header.as_ref().map(|t| t.len()).unwrap_or(0);
+            &ciphertext[header_len..]
         } else {
             ciphertext
         };
 
         // 2. Strip passthroughs
-        let (extracted, template) = format::extract(without_tag, &alphabet);
+        let (extracted, template) = format::extract(without_header, &alphabet);
 
         // 3. Decrypt
-        let decrypted = match policy.engine.as_str() {
+        let decrypted = match configuration.engine.as_str() {
             "ff1" => {
                 let cipher = crate::ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
@@ -210,12 +210,12 @@ impl Client {
         // 4. Reinsert passthroughs
         let output = format::reconstruct(&decrypted, &template);
 
-        self.log_event(policy_name, "decrypt", &policy.engine, &key, true);
+        self.log_event(configuration_name, "decrypt", &configuration.engine, &key, true);
 
         Ok(ProtectResult {
             output,
-            policy_name: policy_name.to_string(),
-            engine: policy.engine.clone(),
+            configuration_name: configuration_name.to_string(),
+            engine: configuration.engine.clone(),
             key_ref: Some(key.key_ref.clone()),
             key_version: Some(key.version),
             reversible: true,
@@ -235,7 +235,7 @@ impl Client {
 
         Ok(ProtectResult {
             output,
-            policy_name: "mask".to_string(),
+            configuration_name: "mask".to_string(),
             engine: "mask".to_string(),
             key_ref: None,
             key_version: None,
@@ -244,12 +244,12 @@ impl Client {
     }
 
     /// Hash a value — irreversible, deterministic.
-    pub fn hash(&self, policy_name: &str, plaintext: &str) -> Result<ProtectResult> {
-        let policy = self.get_policy(policy_name)?;
-        let algorithm = policy.algorithm.as_deref().unwrap_or("sha256");
+    pub fn hash(&self, configuration_name: &str, plaintext: &str) -> Result<ProtectResult> {
+        let configuration = self.get_configuration(configuration_name)?;
+        let algorithm = configuration.algorithm.as_deref().unwrap_or("sha256");
 
-        let (output, key_ref, key_version) = if policy.key_ref.is_some() {
-            let key = self.resolve_key(&policy)?;
+        let (output, key_ref, key_version) = if configuration.key_ref.is_some() {
+            let key = self.resolve_key(&configuration)?;
             let out = crate::hash::hash(algorithm, Some(&key.material), plaintext)?;
             (out, Some(key.key_ref.clone()), Some(key.version))
         } else {
@@ -259,7 +259,7 @@ impl Client {
 
         Ok(ProtectResult {
             output,
-            policy_name: policy_name.to_string(),
+            configuration_name: configuration_name.to_string(),
             engine: "hash".to_string(),
             key_ref,
             key_version,
@@ -267,58 +267,58 @@ impl Client {
         })
     }
 
-    // ── Generic API — dispatches based on policy engine ────────────────
+    // ── Generic API — dispatches based on configuration engine ────────────────
 
-    /// Protect a value using the named policy.
-    /// Dispatches to encrypt, mask, or hash based on the policy's engine.
+    /// Protect a value using the named configuration.
+    /// Dispatches to encrypt, mask, or hash based on the configuration&apos;s engine.
     /// This is the recommended API for most users.
-    pub fn protect(&self, policy_name: &str, value: &str) -> Result<ProtectResult> {
-        let policy = self.get_policy(policy_name)?;
-        match policy.engine.as_str() {
-            "ff1" | "ff3" | "aes_gcm" => self.encrypt(policy_name, value),
+    pub fn protect(&self, configuration_name: &str, value: &str) -> Result<ProtectResult> {
+        let configuration = self.get_configuration(configuration_name)?;
+        match configuration.engine.as_str() {
+            "ff1" | "ff3" | "aes_gcm" => self.encrypt(configuration_name, value),
             "mask" => {
-                let pattern = policy.pattern.as_deref().ok_or_else(||
-                    CypheraError::PolicyNotFound("mask policy requires 'pattern' field".to_string())
+                let pattern = configuration.pattern.as_deref().ok_or_else(||
+                    CypheraError::ConfigurationNotFound("mask configuration requires 'pattern' field".to_string())
                 )?;
                 self.mask(value, pattern)
             }
-            "hash" => self.hash(policy_name, value),
+            "hash" => self.hash(configuration_name, value),
             engine => Err(CypheraError::UnknownEngine(engine.to_string())),
         }
     }
 
-    /// Access (reverse) a protected value using explicit policy name.
-    pub fn access(&self, policy_name: &str, value: &str) -> Result<ProtectResult> {
-        let policy = self.get_policy(policy_name)?;
-        match policy.engine.as_str() {
-            "ff1" | "ff3" | "aes_gcm" => self.decrypt(policy_name, value),
+    /// Access (reverse) a protected value using explicit configuration name.
+    pub fn access(&self, configuration_name: &str, value: &str) -> Result<ProtectResult> {
+        let configuration = self.get_configuration(configuration_name)?;
+        match configuration.engine.as_str() {
+            "ff1" | "ff3" | "aes_gcm" => self.decrypt(configuration_name, value),
             "mask" | "hash" => Err(CypheraError::UnknownEngine(
-                format!("cannot reverse '{}' — {} is irreversible", policy_name, policy.engine)
+                format!("cannot reverse '{}' — {} is irreversible", configuration_name, configuration.engine)
             )),
             engine => Err(CypheraError::UnknownEngine(engine.to_string())),
         }
     }
 
-    /// Access (reverse) a protected value using the embedded tag.
-    /// Looks up the tag from the first N chars, finds the policy, decrypts.
-    /// Tags are checked longest-first to prevent prefix collisions.
-    pub fn access_by_tag(&self, value: &str) -> Result<ProtectResult> {
-        let mut tags: Vec<_> = self.tag_index.iter().collect();
-        tags.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
-        for (tag, policy_name) in tags {
-            if value.starts_with(tag.as_str()) {
-                return self.access(policy_name, value);
+    /// Access (reverse) a protected value using the embedded header (DPH).
+    /// Looks up the header from the first N chars, finds the configuration, decrypts.
+    /// Headers are checked longest-first to prevent prefix collisions.
+    pub fn access_by_header(&self, value: &str) -> Result<ProtectResult> {
+        let mut headers: Vec<_> = self.header_index.iter().collect();
+        headers.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
+        for (header, configuration_name) in headers {
+            if value.starts_with(header.as_str()) {
+                return self.access(configuration_name, value);
             }
         }
-        Err(CypheraError::PolicyNotFound(
-            "no matching tag found — use access(policy_name, value) for untagged values".to_string()
+        Err(CypheraError::ConfigurationNotFound(
+            "no matching header found — use access(configuration_name, value) for untagged values".to_string()
         ))
     }
 
     /// Encrypt multiple values in batch.
     pub fn encrypt_batch(
         &self,
-        items: &[(&str, &str)], // (policy_name, plaintext)
+        items: &[(&str, &str)], // (configuration_name, plaintext)
     ) -> Vec<Result<ProtectResult>> {
         items.iter().map(|(p, v)| self.encrypt(p, v)).collect()
     }
@@ -326,22 +326,22 @@ impl Client {
     /// Decrypt multiple values in batch.
     pub fn decrypt_batch(
         &self,
-        items: &[(&str, &str)], // (policy_name, ciphertext)
+        items: &[(&str, &str)], // (configuration_name, ciphertext)
     ) -> Vec<Result<ProtectResult>> {
         items.iter().map(|(p, v)| self.decrypt(p, v)).collect()
     }
 
     // ── Internal ────────────────────────────────────────────────────────
 
-    fn get_policy(&self, name: &str) -> Result<PolicyEntry> {
-        self.policies
+    fn get_configuration(&self, name: &str) -> Result<Configuration> {
+        self.configurations
             .get(name)
             .cloned()
-            .ok_or_else(|| CypheraError::PolicyNotFound(name.to_string()))
+            .ok_or_else(|| CypheraError::ConfigurationNotFound(name.to_string()))
     }
 
-    fn resolve_alphabet(&self, policy: &PolicyEntry) -> Alphabet {
-        match policy.alphabet.as_deref() {
+    fn resolve_alphabet(&self, configuration: &Configuration) -> Alphabet {
+        match configuration.alphabet.as_deref() {
             Some("digits") => crate::alphabet::digits(),
             Some("hex") => crate::alphabet::hex_lower(),
             Some("alpha_lower") => Alphabet::new("abcdefghijklmnopqrstuvwxyz").unwrap(),
@@ -354,20 +354,20 @@ impl Client {
         }
     }
 
-    fn resolve_key(&self, policy: &PolicyEntry) -> Result<KeyRecord> {
-        let key_ref = policy
+    fn resolve_key(&self, configuration: &Configuration) -> Result<KeyRecord> {
+        let key_ref = configuration
             .key_ref
             .as_deref()
             .or(self.default_key_ref.as_deref())
-            .ok_or_else(|| CypheraError::PolicyNotFound("no key_ref in policy and no default set".to_string()))?;
+            .ok_or_else(|| CypheraError::ConfigurationNotFound("no key_ref in configuration and no default set".to_string()))?;
 
         Ok(self.key_provider.resolve(key_ref)?)
     }
 
-    fn log_event(&self, policy: &str, operation: &str, engine: &str, key: &KeyRecord, success: bool) {
+    fn log_event(&self, configuration: &str, operation: &str, engine: &str, key: &KeyRecord, success: bool) {
         let event = AuditEvent {
             operation: operation.to_string(),
-            policy: policy.to_string(),
+            configuration: configuration.to_string(),
             key_ref: Some(key.key_ref.clone()),
             key_version: Some(key.version),
             engine: engine.to_string(),
@@ -382,7 +382,7 @@ impl Client {
 
 /// Builder for full control over Client construction
 pub struct ClientBuilder {
-    policies: HashMap<String, PolicyEntry>,
+    configurations: HashMap<String, Configuration>,
     key_provider: Option<Box<dyn KeyProvider>>,
     logger: Option<Box<dyn AuditLogger>>,
     default_key_ref: Option<String>,
@@ -391,22 +391,22 @@ pub struct ClientBuilder {
 impl ClientBuilder {
     pub fn new() -> Self {
         Self {
-            policies: HashMap::new(),
+            configurations: HashMap::new(),
             key_provider: None,
             logger: None,
             default_key_ref: None,
         }
     }
 
-    pub fn policy_file(mut self, path: &str) -> std::result::Result<Self, CypheraError> {
+    pub fn configuration_file(mut self, path: &str) -> std::result::Result<Self, CypheraError> {
         let contents = std::fs::read_to_string(path)?;
-        let pf = PolicyFile::from_json(&contents)?;
-        self.policies = pf.policies;
+        let pf = ConfigurationFile::from_json(&contents)?;
+        self.configurations = pf.configurations;
         Ok(self)
     }
 
-    pub fn policy(mut self, pf: PolicyFile) -> Self {
-        self.policies = pf.policies;
+    pub fn configuration(mut self, cf: ConfigurationFile) -> Self {
+        self.configurations = cf.configurations;
         self
     }
 
@@ -427,14 +427,14 @@ impl ClientBuilder {
 
     pub fn build(self) -> std::result::Result<Client, CypheraError> {
         let key_provider = self.key_provider
-            .ok_or_else(|| CypheraError::PolicyNotFound("key_provider is required".to_string()))?;
+            .ok_or_else(|| CypheraError::ConfigurationNotFound("key_provider is required".to_string()))?;
 
-        let policies = self.policies;
-        let tag_index = Client::validate_and_build_tag_index(&policies)?;
+        let configurations = self.configurations;
+        let header_index = Client::validate_and_build_header_index(&configurations)?;
 
         Ok(Client {
-            policies,
-            tag_index,
+            configurations,
+            header_index,
             key_provider: Arc::from(key_provider),
             logger: match self.logger {
                 Some(l) => Arc::from(l) as Arc<dyn AuditLogger>,
@@ -464,8 +464,8 @@ mod tests {
     }
 
     fn test_client() -> Client {
-        let json = r#"{"policies":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"s01"},"card":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"c01"},"phone":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"h01"},"dob":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"d01"},"name":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"n01"},"general":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","tag":"g01"}}}"#;
-        let pf = PolicyFile::from_json(json).unwrap();
+        let json = r#"{"configurations":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","header":"s01"},"card":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","header":"c01"},"phone":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","header":"h01"},"dob":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","header":"d01"},"name":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","header":"n01"},"general":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k1","header":"g01"}}}"#;
+        let pf = ConfigurationFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
@@ -475,7 +475,7 @@ mod tests {
                 tweak: test_tweak(),
             },
         ]);
-        Client::from_policy(pf, Box::new(provider)).unwrap()
+        Client::from_configuration(pf, Box::new(provider)).unwrap()
     }
 
     // ── Core tests ─────────────────────────────────────────────────
@@ -606,8 +606,8 @@ mod tests {
 
     #[test]
     fn test_policy_from_json() {
-        let json = r#"{"policies":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"mykey","tag_enabled":false},"card":{"engine":"ff3","alphabet":"digits","key_ref":"mykey","tag_enabled":false}}}"#;
-        let pf = PolicyFile::from_json(json).unwrap();
+        let json = r#"{"configurations":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"mykey","header_enabled":false},"card":{"engine":"ff3","alphabet":"digits","key_ref":"mykey","header_enabled":false}}}"#;
+        let pf = ConfigurationFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "mykey".into(),
@@ -618,7 +618,7 @@ mod tests {
             },
         ]);
 
-        let client = Client::from_policy(pf, Box::new(provider)).unwrap();
+        let client = Client::from_configuration(pf, Box::new(provider)).unwrap();
 
         // SSN uses ff1 + alphanumeric
         let ct = client.encrypt("ssn", "123-45-6789").unwrap();
@@ -648,8 +648,8 @@ mod tests {
 
     #[test]
     fn test_protect_with_mask_policy() {
-        let json = r#"{"policies":{"ssn_display":{"engine":"mask","pattern":"last4","tag_enabled":false,"key_ref":"k1"}}}"#;
-        let pf = PolicyFile::from_json(json).unwrap();
+        let json = r#"{"configurations":{"ssn_display":{"engine":"mask","pattern":"last4","header_enabled":false,"key_ref":"k1"}}}"#;
+        let pf = ConfigurationFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
@@ -659,7 +659,7 @@ mod tests {
                 tweak: test_tweak(),
             },
         ]);
-        let client = Client::from_policy(pf, Box::new(provider)).unwrap();
+        let client = Client::from_configuration(pf, Box::new(provider)).unwrap();
         let r = client.protect("ssn_display", "123-45-6789").unwrap();
         assert_eq!(r.output, "*******6789");
         assert!(!r.reversible);
@@ -667,8 +667,8 @@ mod tests {
 
     #[test]
     fn test_protect_with_hash_policy() {
-        let json = r#"{"policies":{"ssn_token":{"engine":"hash","key_ref":"k1","tag_enabled":false}}}"#;
-        let pf = PolicyFile::from_json(json).unwrap();
+        let json = r#"{"configurations":{"ssn_token":{"engine":"hash","key_ref":"k1","header_enabled":false}}}"#;
+        let pf = ConfigurationFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
                 key_ref: "k1".into(),
@@ -678,7 +678,7 @@ mod tests {
                 tweak: test_tweak(),
             },
         ]);
-        let client = Client::from_policy(pf, Box::new(provider)).unwrap();
+        let client = Client::from_configuration(pf, Box::new(provider)).unwrap();
         let r = client.protect("ssn_token", "123-45-6789").unwrap();
         assert!(!r.reversible);
         assert!(!r.output.is_empty());
@@ -710,11 +710,11 @@ mod tests {
             },
         ]);
 
-        let json = r#"{"policies":{"ssn":{"engine":"ff1","key_ref":"k1","tag_enabled":false}}}"#;
-        let pf = PolicyFile::from_json(json).unwrap();
+        let json = r#"{"configurations":{"ssn":{"engine":"ff1","key_ref":"k1","header_enabled":false}}}"#;
+        let pf = ConfigurationFile::from_json(json).unwrap();
 
         let client = Client::builder()
-            .policy(pf)
+            .configuration(pf)
             .key_provider(Box::new(provider))
             .build()
             .unwrap();

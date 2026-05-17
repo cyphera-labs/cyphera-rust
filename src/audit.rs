@@ -4,7 +4,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     pub operation: String,
-    pub policy: String,
+    pub configuration: String,
     pub key_ref: Option<String>,
     pub key_version: Option<u32>,
     pub engine: String,

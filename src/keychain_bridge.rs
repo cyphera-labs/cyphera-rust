@@ -1,9 +1,9 @@
 //! Bridge between `keychain` (universal key resolution) and `cyphera-keys` (KeyProvider trait).
 //!
-//! This lets you use keychain URIs directly in policy files:
+//! This lets you use keychain URIs directly in configuration files:
 //!
 //! ```json
-//! policies:
+//! configurations:
 //!   ssn-east:
 //!     engine: ff1
 //!     key_ref: "aws-kms://arn:aws:kms:us-east-1:123:key/ssn"
@@ -12,7 +12,7 @@
 //!     key_ref: "env://DEV_KEY?hex"
 //! ```
 //!
-//! The `key_ref` IS the keychain URI. Different policies can use different
+//! The `key_ref` IS the keychain URI. Different configurations can use different
 //! providers, regions, and keys — all resolved at runtime.
 
 use crate::keys::{KeyProvider, KeyRecord, KeyError, KeyStatus};
@@ -170,9 +170,9 @@ mod tests {
 
         let provider = KeychainProvider::new(store, vec![0u8; 8]);
 
-        let json = r#"{"policies":{"ssn":{"engine":"ff1","key_ref":"test://ssn-key","tag_enabled":false}}}"#;
-        let pf = crate::policy::PolicyFile::from_json(json).unwrap();
-        let client = Client::from_policy(pf, Box::new(provider));
+        let json = r#"{"configurations":{"ssn":{"engine":"ff1","key_ref":"test://ssn-key","header_enabled":false}}}"#;
+        let pf = crate::configuration::ConfigurationFile::from_json(json).unwrap();
+        let client = Client::from_configuration(pf, Box::new(provider));
 
         // Encrypt using keychain-resolved key
         let ct = client.encrypt("ssn", "123-45-6789").unwrap();
