@@ -28,6 +28,8 @@ pub enum CypheraError {
     Hash(#[from] crate::hash::HashError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("configuration '{0}' has header_enabled=true; use access(value) — the header identifies the configuration. The two-arg form is for header_enabled=false configurations only.")]
+    ExplicitAccessOnHeaderedConfiguration(String),
 }
 
 /// Result type alias for Cyphera operations
@@ -177,22 +179,30 @@ impl Client {
         })
     }
 
-    /// Decrypt a value using the named configuration. Strips header if present.
+    /// Decrypt a value using the named configuration. The configuration must
+    /// have `header_enabled = false` — the two-arg form treats the input as
+    /// raw headerless ciphertext. For headered configurations, use
+    /// `access_by_header(value)` so the header identifies the configuration.
     pub fn decrypt(&self, configuration_name: &str, ciphertext: &str) -> Result<ProtectResult> {
+        let configuration = self.get_configuration(configuration_name)?;
+        if configuration.header_enabled {
+            return Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(
+                configuration_name.to_string(),
+            ));
+        }
+        self.decrypt_raw(configuration_name, ciphertext)
+    }
+
+    /// Internal: decrypt assuming `ciphertext` is already header-stripped.
+    /// Used by `decrypt` (after the header_enabled=false check) and by
+    /// `access_by_header` (which strips the header itself).
+    fn decrypt_raw(&self, configuration_name: &str, ciphertext: &str) -> Result<ProtectResult> {
         let configuration = self.get_configuration(configuration_name)?;
         let alphabet = self.resolve_alphabet(&configuration);
         let key = self.resolve_key(&configuration)?;
 
-        // 1. Strip header
-        let without_header = if configuration.header_enabled {
-            let header_len = configuration.header.as_ref().map(|t| t.len()).unwrap_or(0);
-            &ciphertext[header_len..]
-        } else {
-            ciphertext
-        };
-
-        // 2. Strip passthroughs
-        let (extracted, template) = format::extract(without_header, &alphabet);
+        // Strip passthroughs.
+        let (extracted, template) = format::extract(ciphertext, &alphabet);
 
         // 3. Decrypt
         let decrypted = match configuration.engine.as_str() {
@@ -300,18 +310,31 @@ impl Client {
     }
 
     /// Access (reverse) a protected value using the embedded header (DPH).
-    /// Looks up the header from the first N chars, finds the configuration, decrypts.
-    /// Headers are checked longest-first to prevent prefix collisions.
+    /// Looks up the header from the first N chars, finds the configuration,
+    /// strips the header, and decrypts. Headers are checked longest-first to
+    /// prevent prefix collisions.
     pub fn access_by_header(&self, value: &str) -> Result<ProtectResult> {
         let mut headers: Vec<_> = self.header_index.iter().collect();
         headers.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
         for (header, configuration_name) in headers {
             if value.starts_with(header.as_str()) {
-                return self.access(configuration_name, value);
+                let configuration = self.get_configuration(configuration_name)?;
+                match configuration.engine.as_str() {
+                    "ff1" | "ff3" | "aes_gcm" => {
+                        let stripped = &value[header.len()..];
+                        return self.decrypt_raw(configuration_name, stripped);
+                    }
+                    "mask" | "hash" => {
+                        return Err(CypheraError::UnknownEngine(
+                            format!("cannot reverse '{}' — {} is irreversible", configuration_name, configuration.engine)
+                        ));
+                    }
+                    engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
+                }
             }
         }
         Err(CypheraError::ConfigurationNotFound(
-            "no matching header found — use access(configuration_name, value) for untagged values".to_string()
+            "no matching header found — use access(configuration_name, value) for headerless values".to_string()
         ))
     }
 
@@ -488,7 +511,7 @@ mod tests {
         // Dashes preserved
         assert_eq!(ct.output.matches('-').count(), 2);
         // Roundtrip
-        let pt = client.decrypt("ssn", &ct.output).unwrap();
+        let pt = client.access_by_header(&ct.output).unwrap();
         assert_eq!(pt.output, "123-45-6789");
     }
 
@@ -498,7 +521,7 @@ mod tests {
         let ct = client.encrypt("card", "4111-1111-1111-1111").unwrap();
         // Dashes preserved
         assert_eq!(ct.output.matches('-').count(), 3);
-        let pt = client.decrypt("card", &ct.output).unwrap();
+        let pt = client.access_by_header(&ct.output).unwrap();
         assert_eq!(pt.output, "4111-1111-1111-1111");
     }
 
@@ -511,7 +534,7 @@ mod tests {
         assert!(ct.output.contains(')'));
         assert!(ct.output.contains(' '));
         assert!(ct.output.contains('-'));
-        let pt = client.decrypt("phone", &ct.output).unwrap();
+        let pt = client.access_by_header(&ct.output).unwrap();
         assert_eq!(pt.output, "(555) 867-5309");
     }
 
@@ -520,7 +543,7 @@ mod tests {
         let client = test_client();
         let ct = client.encrypt("dob", "03/15/1990").unwrap();
         assert_eq!(ct.output.matches('/').count(), 2);
-        let pt = client.decrypt("dob", &ct.output).unwrap();
+        let pt = client.access_by_header(&ct.output).unwrap();
         assert_eq!(pt.output, "03/15/1990");
     }
 
@@ -528,7 +551,7 @@ mod tests {
     fn test_encrypt_plain_string() {
         let client = test_client();
         let ct = client.encrypt("name", "johnsmith").unwrap();
-        let pt = client.decrypt("name", &ct.output).unwrap();
+        let pt = client.access_by_header(&ct.output).unwrap();
         assert_eq!(pt.output, "johnsmith");
     }
 
@@ -620,7 +643,7 @@ mod tests {
 
         let client = Client::from_configuration(pf, Box::new(provider)).unwrap();
 
-        // SSN uses ff1 + alphanumeric
+        // SSN uses ff1 + alphanumeric, header_enabled=false → use decrypt(name, ct)
         let ct = client.encrypt("ssn", "123-45-6789").unwrap();
         assert_eq!(ct.engine, "ff1");
         let pt = client.decrypt("ssn", &ct.output).unwrap();
@@ -641,8 +664,8 @@ mod tests {
         let r = client.protect("ssn", "123-45-6789").unwrap();
         assert!(r.reversible);
         assert_eq!(r.engine, "ff1");
-        // access reverses it
-        let pt = client.access("ssn", &r.output).unwrap();
+        // access reverses it via the header (header_enabled=true on ssn)
+        let pt = client.access_by_header(&r.output).unwrap();
         assert_eq!(pt.output, "123-45-6789");
     }
 
@@ -719,8 +742,35 @@ mod tests {
             .build()
             .unwrap();
 
+        // header_enabled=false → use decrypt(name, ct)
         let ct = client.encrypt("ssn", "123456789").unwrap();
         let pt = client.decrypt("ssn", &ct.output).unwrap();
         assert_eq!(pt.output, "123456789");
+    }
+
+    // ── New error condition: 2-arg access on headered config ──────────────
+
+    #[test]
+    fn test_decrypt_on_headered_config_errors() {
+        let client = test_client();
+        let ct = client.encrypt("ssn", "123-45-6789").unwrap();
+        // ssn has header_enabled=true; calling decrypt(name, ct) must error.
+        let err = client.decrypt("ssn", &ct.output);
+        assert!(matches!(
+            err,
+            Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(ref n)) if n == "ssn"
+        ));
+    }
+
+    #[test]
+    fn test_access_on_headered_config_errors() {
+        let client = test_client();
+        let ct = client.protect("ssn", "123-45-6789").unwrap();
+        // Same error from access() — it routes to decrypt() for ff1/ff3 engines.
+        let err = client.access("ssn", &ct.output);
+        assert!(matches!(
+            err,
+            Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(ref n)) if n == "ssn"
+        ));
     }
 }
