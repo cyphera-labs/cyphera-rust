@@ -11,7 +11,7 @@ keywords = ["encryption", "fpe", "format-preserving", "data-protection", "maskin
 categories = ["cryptography", "encoding"]
 
 [dependencies]
-aes = "0.8"
+aes = "0.9"
 ctr = "0.9"
 num-bigint = "0.4"
 num-traits = "0.2"
