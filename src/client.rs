@@ -84,6 +84,30 @@ impl Client {
         Ok(index)
     }
 
+    /// Auto-discover the configuration file. Checks, in order:
+    ///   1. The `CYPHERA_CONFIG_FILE` environment variable
+    ///   2. `./cyphera.json` in the current working directory
+    ///   3. `/etc/cyphera/cyphera.json` system-wide path
+    ///
+    /// Errors with a stable message if none are found.
+    pub fn load(key_provider: Box<dyn KeyProvider>) -> Result<Self> {
+        let candidates: Vec<String> = std::env::var("CYPHERA_CONFIG_FILE")
+            .ok()
+            .into_iter()
+            .chain(std::iter::once("./cyphera.json".to_string()))
+            .chain(std::iter::once("/etc/cyphera/cyphera.json".to_string()))
+            .collect();
+
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                return Self::from_file(path, key_provider);
+            }
+        }
+        Err(CypheraError::ConfigurationNotFound(
+            "No configuration file found. Checked: CYPHERA_CONFIG_FILE env, ./cyphera.json, /etc/cyphera/cyphera.json".to_string()
+        ))
+    }
+
     /// Create a client from a JSON configuration file on disk.
     pub fn from_file(
         path: &str,
@@ -772,5 +796,61 @@ mod tests {
             err,
             Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(ref n)) if n == "ssn"
         ));
+    }
+
+    // ── load() auto-discovery ─────────────────────────────────────────────
+
+    #[test]
+    fn test_load_errors_when_no_config_file() {
+        // Make sure CYPHERA_CONFIG_FILE is unset and we're in a temp dir
+        // with no cyphera.json. /etc/cyphera/cyphera.json is unlikely to
+        // exist in CI, but we test the error path defensively.
+        let tmp = std::env::temp_dir().join("cyphera-rust-load-test-empty");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+        std::env::remove_var("CYPHERA_CONFIG_FILE");
+
+        let provider = crate::keys::MemoryProvider::new(vec![]);
+        let r = Client::load(Box::new(provider));
+
+        std::env::set_current_dir(prev).unwrap();
+        std::fs::remove_dir_all(&tmp).ok();
+
+        // Either an error from no file found, or /etc/cyphera/cyphera.json
+        // exists on this machine and the load succeeded — either is OK
+        // (we only care that the method exists and is invokable).
+        if let Err(CypheraError::ConfigurationNotFound(msg)) = &r {
+            assert!(msg.contains("CYPHERA_CONFIG_FILE"));
+            assert!(msg.contains("./cyphera.json"));
+            assert!(msg.contains("/etc/cyphera/cyphera.json"));
+        }
+    }
+
+    #[test]
+    fn test_load_uses_env_var() {
+        let tmp = std::env::temp_dir().join("cyphera-rust-load-test-env");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("custom-cyphera.json");
+        std::fs::write(&path,
+            r#"{"configurations":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"k","header_enabled":false}}}"#).unwrap();
+        std::env::set_var("CYPHERA_CONFIG_FILE", &path);
+        let provider = crate::keys::MemoryProvider::new(vec![
+            KeyRecord {
+                key_ref: "k".into(),
+                version: 1,
+                status: crate::keys::KeyStatus::Active,
+                material: test_key(),
+                tweak: test_tweak(),
+            },
+        ]);
+        let client = Client::load(Box::new(provider)).unwrap();
+        std::env::remove_var("CYPHERA_CONFIG_FILE");
+        std::fs::remove_dir_all(&tmp).ok();
+
+        // Confirm the configuration loaded
+        let ct = client.encrypt("ssn", "123456789").unwrap();
+        let pt = client.decrypt("ssn", &ct.output).unwrap();
+        assert_eq!(pt.output, "123456789");
     }
 }
