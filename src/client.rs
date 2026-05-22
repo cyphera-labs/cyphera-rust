@@ -28,8 +28,6 @@ pub enum CypheraError {
     Hash(#[from] crate::hash::HashError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("configuration '{0}' has header_enabled=true; use access(value) — the header identifies the configuration. The two-arg form is for header_enabled=false configurations only.")]
-    ExplicitAccessOnHeaderedConfiguration(String),
 }
 
 /// Result type alias for Cyphera operations
@@ -217,23 +215,27 @@ impl Client {
         })
     }
 
-    /// Decrypt a value using the named configuration. The configuration must
-    /// have `header_enabled = false` — the two-arg form treats the input as
-    /// raw headerless ciphertext. For headered configurations, use
-    /// `access_by_header(value)` so the header identifies the configuration.
-    pub fn decrypt(&self, configuration_name: &str, ciphertext: &str) -> Result<ProtectResult> {
+    /// Escape-hatch access for unique situations where the protected value has
+    /// no header (mainframe formats, fixed-width legacy systems, etc.). Caller
+    /// names the configuration explicitly; the value is decrypted as raw
+    /// headerless ciphertext.
+    ///
+    /// Prefer the high-level `access(value)` for normal use — this form is not
+    /// the primary API and is intentionally not pushed in examples.
+    pub fn access_with_config(&self, configuration_name: &str, value: &str) -> Result<ProtectResult> {
         let configuration = self.get_configuration(configuration_name)?;
-        if configuration.header_enabled {
-            return Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(
-                configuration_name.to_string(),
-            ));
+        match configuration.engine.as_str() {
+            "ff1" | "ff3" | "ff31" | "aes_gcm" => self.decrypt_raw(configuration_name, value),
+            "mask" | "hash" => Err(CypheraError::UnknownEngine(
+                format!("cannot reverse '{}' — {} is irreversible", configuration_name, configuration.engine)
+            )),
+            engine => Err(CypheraError::UnknownEngine(engine.to_string())),
         }
-        self.decrypt_raw(configuration_name, ciphertext)
     }
 
     /// Internal: decrypt assuming `ciphertext` is already header-stripped.
-    /// Used by `decrypt` (after the header_enabled=false check) and by
-    /// `access_by_header` (which strips the header itself).
+    /// Used by `access` (which strips the header itself) and by
+    /// `access_with_config` (the escape hatch — caller asserts no header).
     fn decrypt_raw(&self, configuration_name: &str, ciphertext: &str) -> Result<ProtectResult> {
         let configuration = self.get_configuration(configuration_name)?;
         let alphabet = self.resolve_alphabet(&configuration);
@@ -340,23 +342,11 @@ impl Client {
         }
     }
 
-    /// Access (reverse) a protected value using explicit configuration name.
-    pub fn access(&self, configuration_name: &str, value: &str) -> Result<ProtectResult> {
-        let configuration = self.get_configuration(configuration_name)?;
-        match configuration.engine.as_str() {
-            "ff1" | "ff3" | "aes_gcm" => self.decrypt(configuration_name, value),
-            "mask" | "hash" => Err(CypheraError::UnknownEngine(
-                format!("cannot reverse '{}' — {} is irreversible", configuration_name, configuration.engine)
-            )),
-            engine => Err(CypheraError::UnknownEngine(engine.to_string())),
-        }
-    }
-
-    /// Access (reverse) a protected value using the embedded header (DPH).
-    /// Looks up the header from the first N chars, finds the configuration,
-    /// strips the header, and decrypts. Headers are checked longest-first to
-    /// prevent prefix collisions.
-    pub fn access_by_header(&self, value: &str) -> Result<ProtectResult> {
+    /// Reverse a protected value. The SDK uses the loaded configurations to
+    /// figure out which one applies — it checks the leading bytes of `value`
+    /// against the registered headers (longest first to avoid prefix
+    /// collisions), strips the matched header, and decrypts.
+    pub fn access(&self, value: &str) -> Result<ProtectResult> {
         let mut headers: Vec<_> = self.header_index.iter().collect();
         headers.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
         for (header, configuration_name) in headers {
@@ -377,7 +367,7 @@ impl Client {
             }
         }
         Err(CypheraError::ConfigurationNotFound(
-            "no matching header found — use access(configuration_name, value) for headerless values".to_string()
+            "no matching header found".to_string()
         ))
     }
 
@@ -394,7 +384,7 @@ impl Client {
         &self,
         items: &[(&str, &str)], // (configuration_name, ciphertext)
     ) -> Vec<Result<ProtectResult>> {
-        items.iter().map(|(p, v)| self.decrypt(p, v)).collect()
+        items.iter().map(|(p, v)| self.access_with_config(p, v)).collect()
     }
 
     // ── Internal ────────────────────────────────────────────────────────
@@ -554,7 +544,7 @@ mod tests {
         // Dashes preserved
         assert_eq!(ct.output.matches('-').count(), 2);
         // Roundtrip
-        let pt = client.access_by_header(&ct.output).unwrap();
+        let pt = client.access(&ct.output).unwrap();
         assert_eq!(pt.output, "123-45-6789");
     }
 
@@ -564,7 +554,7 @@ mod tests {
         let ct = client.encrypt("card", "4111-1111-1111-1111").unwrap();
         // Dashes preserved
         assert_eq!(ct.output.matches('-').count(), 3);
-        let pt = client.access_by_header(&ct.output).unwrap();
+        let pt = client.access(&ct.output).unwrap();
         assert_eq!(pt.output, "4111-1111-1111-1111");
     }
 
@@ -577,7 +567,7 @@ mod tests {
         assert!(ct.output.contains(')'));
         assert!(ct.output.contains(' '));
         assert!(ct.output.contains('-'));
-        let pt = client.access_by_header(&ct.output).unwrap();
+        let pt = client.access(&ct.output).unwrap();
         assert_eq!(pt.output, "(555) 867-5309");
     }
 
@@ -586,7 +576,7 @@ mod tests {
         let client = test_client();
         let ct = client.encrypt("dob", "03/15/1990").unwrap();
         assert_eq!(ct.output.matches('/').count(), 2);
-        let pt = client.access_by_header(&ct.output).unwrap();
+        let pt = client.access(&ct.output).unwrap();
         assert_eq!(pt.output, "03/15/1990");
     }
 
@@ -594,7 +584,7 @@ mod tests {
     fn test_encrypt_plain_string() {
         let client = test_client();
         let ct = client.encrypt("name", "johnsmith").unwrap();
-        let pt = client.access_by_header(&ct.output).unwrap();
+        let pt = client.access(&ct.output).unwrap();
         assert_eq!(pt.output, "johnsmith");
     }
 
@@ -689,13 +679,13 @@ mod tests {
         // SSN uses ff1 + alphanumeric, header_enabled=false → use decrypt(name, ct)
         let ct = client.encrypt("ssn", "123-45-6789").unwrap();
         assert_eq!(ct.engine, "ff1");
-        let pt = client.decrypt("ssn", &ct.output).unwrap();
+        let pt = client.access_with_config("ssn", &ct.output).unwrap();
         assert_eq!(pt.output, "123-45-6789");
 
         // Card uses ff3 + digits — no structural extraction needed since all digits
         let ct2 = client.encrypt("card", "4111111111111111").unwrap();
         assert_eq!(ct2.engine, "ff3");
-        let pt2 = client.decrypt("card", &ct2.output).unwrap();
+        let pt2 = client.access_with_config("card", &ct2.output).unwrap();
         assert_eq!(pt2.output, "4111111111111111");
     }
 
@@ -708,7 +698,7 @@ mod tests {
         assert!(r.reversible);
         assert_eq!(r.engine, "ff1");
         // access reverses it via the header (header_enabled=true on ssn)
-        let pt = client.access_by_header(&r.output).unwrap();
+        let pt = client.access(&r.output).unwrap();
         assert_eq!(pt.output, "123-45-6789");
     }
 
@@ -748,8 +738,9 @@ mod tests {
         let r = client.protect("ssn_token", "123-45-6789").unwrap();
         assert!(!r.reversible);
         assert!(!r.output.is_empty());
-        // access should fail — hash is irreversible
-        let err = client.access("ssn_token", &r.output);
+        // access should fail — hash output has no header, so access(value) can't
+        // find a matching configuration. (Even semantically: hash is irreversible.)
+        let err = client.access(&r.output);
         assert!(err.is_err());
     }
 
@@ -787,34 +778,8 @@ mod tests {
 
         // header_enabled=false → use decrypt(name, ct)
         let ct = client.encrypt("ssn", "123456789").unwrap();
-        let pt = client.decrypt("ssn", &ct.output).unwrap();
+        let pt = client.access_with_config("ssn", &ct.output).unwrap();
         assert_eq!(pt.output, "123456789");
-    }
-
-    // ── New error condition: 2-arg access on headered config ──────────────
-
-    #[test]
-    fn test_decrypt_on_headered_config_errors() {
-        let client = test_client();
-        let ct = client.encrypt("ssn", "123-45-6789").unwrap();
-        // ssn has header_enabled=true; calling decrypt(name, ct) must error.
-        let err = client.decrypt("ssn", &ct.output);
-        assert!(matches!(
-            err,
-            Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(ref n)) if n == "ssn"
-        ));
-    }
-
-    #[test]
-    fn test_access_on_headered_config_errors() {
-        let client = test_client();
-        let ct = client.protect("ssn", "123-45-6789").unwrap();
-        // Same error from access() — it routes to decrypt() for ff1/ff3 engines.
-        let err = client.access("ssn", &ct.output);
-        assert!(matches!(
-            err,
-            Err(CypheraError::ExplicitAccessOnHeaderedConfiguration(ref n)) if n == "ssn"
-        ));
     }
 
     // ── load() auto-discovery ─────────────────────────────────────────────
@@ -869,7 +834,7 @@ mod tests {
 
         // Confirm the configuration loaded
         let ct = client.encrypt("ssn", "123456789").unwrap();
-        let pt = client.decrypt("ssn", &ct.output).unwrap();
+        let pt = client.access_with_config("ssn", &ct.output).unwrap();
         assert_eq!(pt.output, "123456789");
     }
 }

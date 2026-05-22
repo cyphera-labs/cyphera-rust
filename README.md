@@ -30,8 +30,8 @@ let client = Client::from_file("cyphera.json", Box::new(provider))?;
 let result = client.protect("ssn", "123-45-6789")?;
 // result.output = "T01i6J-xF-07pX" (DPH-prefixed, dashes preserved)
 
-// Access (header-based, no configuration name needed)
-let plain = client.access_by_header(&result.output)?;
+// Access — single 1-arg method; the SDK uses the header to figure out the configuration
+let plain = client.access(&result.output)?;
 // plain.output = "123-45-6789"
 ```
 
@@ -50,8 +50,7 @@ let plain = client.access_by_header(&result.output)?;
 
 The `header` (Data Protection Header, DPH) is a short prefix prepended to
 protected output that identifies the configuration used. It lets
-`access_by_header()` reverse a value without the caller naming the
-configuration.
+`access()` reverse a value without the caller naming the configuration.
 
 ## Cross-Language Compatible
 

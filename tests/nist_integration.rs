@@ -122,10 +122,10 @@ fn assert_sdk(client: &Client, configuration: &str, plaintext: &str, expected_ct
         "NIST vector mismatch for configuration '{configuration}': encrypt('{plaintext}') = '{}', expected '{expected_ct}'",
         ct.output);
 
-    // Decrypt roundtrip
-    let pt = client.decrypt(configuration, &ct.output)
-        .unwrap_or_else(|e| panic!("decrypt({configuration}, {}) failed: {e}", ct.output));
+    // Reverse roundtrip via the name-keyed escape hatch (NIST vectors are headerless).
+    let pt = client.access_with_config(configuration, &ct.output)
+        .unwrap_or_else(|e| panic!("access_with_config({configuration}, {}) failed: {e}", ct.output));
     assert_eq!(pt.output, plaintext,
-        "Roundtrip failed for configuration '{configuration}': decrypt('{}') = '{}', expected '{plaintext}'",
+        "Roundtrip failed for configuration '{configuration}': access_with_config('{}') = '{}', expected '{plaintext}'",
         ct.output, pt.output);
 }
