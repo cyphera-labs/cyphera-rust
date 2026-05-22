@@ -9,7 +9,7 @@ use std::collections::HashMap;
 #[derive(Debug)]
 pub enum FF3Error {
     InvalidKeyLength(usize),
-    InvalidTweakLength(usize),
+    InvalidTweakLength { got: usize, expected: usize },
     PlaintextTooShort,
     PlaintextTooLong,
     InvalidChar(char, usize),
@@ -20,7 +20,7 @@ impl std::fmt::Display for FF3Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidKeyLength(n) => write!(f, "invalid key length: {n} (expected 16, 24, or 32)"),
-            Self::InvalidTweakLength(n) => write!(f, "invalid tweak length: {n} (expected 8)"),
+            Self::InvalidTweakLength { got, expected } => write!(f, "invalid tweak length: {got} (expected {expected})"),
             Self::PlaintextTooShort => write!(f, "plaintext too short (min 2 characters)"),
             Self::PlaintextTooLong => write!(f, "plaintext too long"),
             Self::InvalidChar(c, pos) => write!(f, "invalid char '{c}' at position {pos}"),
@@ -74,12 +74,14 @@ impl FF3 {
             n => return Err(FF3Error::InvalidKeyLength(n)),
         }
         if tweak.len() != 8 {
-            return Err(FF3Error::InvalidTweakLength(tweak.len()));
+            return Err(FF3Error::InvalidTweakLength { got: tweak.len(), expected: 8 });
         }
 
         let radix = alphabet.radix();
         let aes_cipher = Self::create_aes(key)?;
-        let max_len = if radix <= 36 { 32 } else { 56 };
+        // NIST SP 800-38G: maxlen = 2 * floor(96 / log2(radix)).
+        // (radix 10 -> 56, radix 26 -> 40, radix 62/64 -> 32)
+        let max_len = 2 * ((96.0 / (radix as f64).log2()).floor() as usize);
 
         let alpha: Vec<char> = alphabet.chars().to_vec();
         let index: HashMap<char, usize> = alpha.iter()
@@ -342,6 +344,48 @@ impl FF3 {
     }
 }
 
+/// FF3-1 (NIST SP 800-38G Revision 1) Format-Preserving Encryption.
+///
+/// FF3-1 is FF3 with a 56-bit (7-byte) tweak. The 56-bit tweak is expanded
+/// into the 64-bit form the FF3 round function consumes; everything downstream
+/// is identical FF3. FF3-1 supersedes the original FF3, which is
+/// cryptographically weak.
+pub struct FF31 {
+    inner: FF3,
+}
+
+impl FF31 {
+    /// Create an FF3-1 cipher. `tweak` MUST be exactly 7 bytes (56 bits).
+    pub fn new(key: &[u8], tweak: &[u8], alphabet: Alphabet) -> Result<Self, FF3Error> {
+        if tweak.len() != 7 {
+            return Err(FF3Error::InvalidTweakLength { got: tweak.len(), expected: 7 });
+        }
+        let expanded = Self::expand_tweak(tweak);
+        Ok(Self { inner: FF3::new(key, &expanded, alphabet)? })
+    }
+
+    /// Expand the 56-bit FF3-1 tweak into the 64-bit tweak FF3 consumes.
+    ///
+    /// Per NIST SP 800-38G Rev 1, with `expanded[0..4]` = T_L and
+    /// `expanded[4..8]` = T_R:
+    ///   T_L = T[0..27] ‖ 0000
+    ///   T_R = T[32..55] ‖ T[28..31] ‖ 0000
+    fn expand_tweak(t: &[u8]) -> [u8; 8] {
+        [
+            t[0], t[1], t[2], t[3] & 0xF0,
+            t[4], t[5], t[6], (t[3] & 0x0F) << 4,
+        ]
+    }
+
+    pub fn encrypt(&self, plaintext: &str) -> Result<String, FF3Error> {
+        self.inner.encrypt(plaintext)
+    }
+
+    pub fn decrypt(&self, ciphertext: &str) -> Result<String, FF3Error> {
+        self.inner.decrypt(ciphertext)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,6 +426,48 @@ mod tests {
     #[test] fn nist_13() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "D8E7920AFA330A73", 10, "89012123456789000000789000000", "04344343235792599165734622699"); }
     #[test] fn nist_14() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "0000000000000000", 10, "89012123456789000000789000000", "30859239999374053872365555822"); }
     #[test] fn nist_15() { nist_test("EF4359D8D580AA4F7F036D6F04FC6A942B7E151628AED2A6ABF7158809CF4F3C", "9A768A92F60E12D8", 26, "0123456789abcdefghi", "p0b2godfja9bhb7bk38"); }
+
+    // ── FF3-1: all 18 NIST ACVP AES-FF3-1 test vectors ─────────────────
+
+    fn ff31_test(key_hex: &str, tweak_hex: &str, alpha: &str, plaintext: &str, expected: &str) {
+        let key = hex::decode(key_hex).unwrap();
+        let tweak = hex::decode(tweak_hex).unwrap();
+        let alphabet = Alphabet::new(alpha).unwrap();
+        let cipher = FF31::new(&key, &tweak, alphabet).unwrap();
+        let ct = cipher.encrypt(plaintext).unwrap();
+        assert_eq!(ct, expected, "FF3-1 encrypt: {plaintext} -> expected {expected}, got {ct}");
+        let pt = cipher.decrypt(&ct).unwrap();
+        assert_eq!(pt, plaintext, "FF3-1 decrypt roundtrip failed");
+    }
+
+    const A26: &str = "abcdefghijklmnopqrstuvwxyz";
+    const A64: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz+/";
+
+    #[test] fn acvp_ff31_01() { ff31_test("2DE79D232DF5585D68CE47882AE256D6", "CBD09280979564", "0123456789", "3992520240", "8901801106"); }
+    #[test] fn acvp_ff31_02() { ff31_test("01C63017111438F7FC8E24EB16C71AB5", "C4E822DCD09F27", "0123456789", "60761757463116869318437658042297305934914824457484538562", "35637144092473838892796702739628394376915177448290847293"); }
+    #[test] fn acvp_ff31_03() { ff31_test("718385E6542534604419E83CE387A437", "B6F35084FA90E1", A26, "wfmwlrorcd", "ywowehycyd"); }
+    #[test] fn acvp_ff31_04() { ff31_test("DB602DFF22ED7E84C8D8C865A941A238", "EBEFD63BCC2083", A26, "kkuomenbzqvggfbteqdyanwpmhzdmoicekiihkrm", "belcfahcwwytwrckieymthabgjjfkxtxauipmjja"); }
+    #[test] fn acvp_ff31_05() { ff31_test("AEE87D0D485B3AFD12BD1E0B9D03D50D", "5F9140601D224B", A64, "ixvuuIHr0e", "GR90R1q838"); }
+    #[test] fn acvp_ff31_06() { ff31_test("7B6C88324732F7F4AD435DA9AD77F917", "3F42102C0BAB39", A64, "21q1kbbIVSrAFtdFWzdMeIDpRqpo", "cvQ/4aGUV4wRnyO3CHmgEKW5hk8H"); }
+    #[test] fn acvp_ff31_07() { ff31_test("F62EDB777A671075D47563F3A1E9AC797AA706A2D8E02FC8", "493B8451BF6716", "0123456789", "4406616808", "1807744762"); }
+    #[test] fn acvp_ff31_08() { ff31_test("0951B475D1A327C52756F2624AF224C80E9BE85F09B2D44F", "D679E2EA3054E1", "0123456789", "99980459818278359406199791971849884432821321826358606310", "84359031857952748660483617398396641079558152339419110919"); }
+    #[test] fn acvp_ff31_09() { ff31_test("49CCB8F62D941E5684599ECA0300937B5C766D053E109777", "0BFCF75CDC2FC1", A26, "jaxlrchjjx", "kjdbfqyahd"); }
+    #[test] fn acvp_ff31_10() { ff31_test("03D253674A9309FF07ED0E71B24CBFE769025E09FCE544D7", "B33176B1DA0F6C", A26, "tafzrybuvhiqvcyztuxfnwfprmqlwpayphxbawpl", "loaemzbgqkywkdhmncrijzildzleoqibtthdiliv"); }
+    #[test] fn acvp_ff31_11() { ff31_test("1C24B74B7C1B9969314CB53E92F98EFD620D5520017FB076", "0380341C425A6F", A64, "6np8r2t8zo", "HgpCXoA1Rt"); }
+    #[test] fn acvp_ff31_12() { ff31_test("C0ABADFC071379824A070E8C3FD40DD9BFD7A3C99A0D5FE3", "6C2926C705DDAF", A64, "GKB6sa9g56BSJ09iJ4dsaxRdsMvo", "gC0tTSdDPxM79QOWi+z+SNL9C4V+"); }
+    #[test] fn acvp_ff31_13() { ff31_test("1FAA03EFF55A06F8FAB3F1DC57127D493E2F8F5C365540467A3A055BDBE6481D", "4D67130C030445", "0123456789", "3679409436", "1735794859"); }
+    #[test] fn acvp_ff31_14() { ff31_test("9CE16E125BD422A011408EB083355E7089E70A4CD2F59E141D0B94A74BCC5967", "4684635BD2C821", "0123456789", "85783290820098255530464619643265070052870796363685134012", "75104723514036464144839960480545848044718729603261409917"); }
+    #[test] fn acvp_ff31_15() { ff31_test("6187F8BDE99F7DAF9E3EE8A8654308E7E51D31FA88AFFAEB5592041C033B736B", "5820812B3D5DD1", A26, "mkblaoiyfd", "ifpyiihvvq"); }
+    #[test] fn acvp_ff31_16() { ff31_test("F6807FB9688937E4D4956006C8F0CB2394148A5F4B14666CF353F4941428FFD7", "30C87B99890096", A26, "wrammvhudopmaazlsxevzwzwpezzmghwfnmkitnk", "nzftnfkliuctlmtdfrxfhwgevrbcbgljurnytxkj"); }
+    #[test] fn acvp_ff31_17() { ff31_test("9C2B69F7DDF181C54398E345BE04C2F6B00B9DD1679200E1E04C4FF961AE0F09", "103C238B4B1E44", A64, "H2/c6FblSA", "EOg4H1bE+8"); }
+    #[test] fn acvp_ff31_18() { ff31_test("C58BCBD08B90006CEC7E82B2D987D79F6A21111DEF0CEBB273CBAEB2D6CD4044", "7036604882667B", A64, "bz5TcS1krnD8IOLdrQeKzXkLAa6h", "Z6x3/9LPW8SZunRezRM8J68Q4J03"); }
+
+    #[test]
+    fn ff31_rejects_8_byte_tweak() {
+        let key = hex::decode("2DE79D232DF5585D68CE47882AE256D6").unwrap();
+        let r = FF31::new(&key, &[0u8; 8], crate::alphabet::digits());
+        assert!(r.is_err());
+    }
 
     // ── General tests ───────────────────────────────────────────────────
 

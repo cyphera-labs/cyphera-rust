@@ -1,6 +1,6 @@
 pub mod core;
 
-pub use self::core::{FF3, FF3Error};
+pub use self::core::{FF3, FF31, FF3Error};
 
 /// Convenience: FF3 cipher over digits (radix 10)
 pub fn digits(key: &[u8], tweak: &[u8]) -> Result<FF3, FF3Error> {

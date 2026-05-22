@@ -35,6 +35,15 @@ pub enum CypheraError {
 /// Result type alias for Cyphera operations
 pub type Result<T> = std::result::Result<T, CypheraError>;
 
+/// Emit the FF3 deprecation warning to stderr, once per process. The original
+/// FF3 algorithm is cryptographically weak; configurations should use `ff31`.
+fn warn_ff3_deprecated() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        eprintln!("WARNING: engine 'ff3' is deprecated and cryptographically weak — migrate to 'ff31' (FF3-1).");
+    });
+}
+
 /// The output of an encrypt/decrypt/mask/hash operation
 #[derive(Debug, Clone)]
 pub struct ProtectResult {
@@ -174,7 +183,12 @@ impl Client {
                 cipher.encrypt(&extracted)?
             }
             "ff3" => {
+                warn_ff3_deprecated();
                 let cipher = crate::ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
+                cipher.encrypt(&extracted)?
+            }
+            "ff31" => {
+                let cipher = crate::ff3::FF31::new(&key.material, &key.tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
             }
             engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
@@ -235,7 +249,12 @@ impl Client {
                 cipher.decrypt(&extracted)?
             }
             "ff3" => {
+                warn_ff3_deprecated();
                 let cipher = crate::ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
+                cipher.decrypt(&extracted)?
+            }
+            "ff31" => {
+                let cipher = crate::ff3::FF31::new(&key.material, &key.tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
             }
             engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
