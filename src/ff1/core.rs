@@ -11,7 +11,7 @@ use thiserror::Error;
 pub enum FF1Error {
     #[error("invalid key length: {0} (expected 16, 24, or 32)")]
     InvalidKeyLength(usize),
-    #[error("plaintext too short (min 2 characters)")]
+    #[error("input too short (NIST minimum: length >= 2 and radix^length >= 1,000,000)")]
     PlaintextTooShort,
     #[error("plaintext too long (max {0})")]
     PlaintextTooLong(usize),
@@ -100,8 +100,7 @@ impl FF1 {
     pub fn encrypt(&self, plaintext: &str) -> Result<String, FF1Error> {
         let digits = self.to_digits(plaintext)?;
         let n = digits.len();
-        if n < 2 { return Err(FF1Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF1Error::PlaintextTooLong(self.max_len)); }
+        self.check_length(n)?;
         let result = self.ff1_encrypt(&digits, &self.tweak);
         Ok(self.from_digits(&result))
     }
@@ -109,8 +108,7 @@ impl FF1 {
     pub fn decrypt(&self, ciphertext: &str) -> Result<String, FF1Error> {
         let digits = self.to_digits(ciphertext)?;
         let n = digits.len();
-        if n < 2 { return Err(FF1Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF1Error::PlaintextTooLong(self.max_len)); }
+        self.check_length(n)?;
         let result = self.ff1_decrypt(&digits, &self.tweak);
         Ok(self.from_digits(&result))
     }
@@ -118,8 +116,7 @@ impl FF1 {
     pub fn encrypt_with_tweak(&self, plaintext: &str, tweak: &[u8]) -> Result<String, FF1Error> {
         let digits = self.to_digits(plaintext)?;
         let n = digits.len();
-        if n < 2 { return Err(FF1Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF1Error::PlaintextTooLong(self.max_len)); }
+        self.check_length(n)?;
         let result = self.ff1_encrypt(&digits, tweak);
         Ok(self.from_digits(&result))
     }
@@ -127,8 +124,7 @@ impl FF1 {
     pub fn decrypt_with_tweak(&self, ciphertext: &str, tweak: &[u8]) -> Result<String, FF1Error> {
         let digits = self.to_digits(ciphertext)?;
         let n = digits.len();
-        if n < 2 { return Err(FF1Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF1Error::PlaintextTooLong(self.max_len)); }
+        self.check_length(n)?;
         let result = self.ff1_decrypt(&digits, tweak);
         Ok(self.from_digits(&result))
     }
@@ -348,6 +344,18 @@ impl FF1 {
         }
     }
 
+    /// NIST SP 800-38G minimum-domain check: length >= 2 and
+    /// radix^length >= 1,000,000.
+    fn check_length(&self, n: usize) -> Result<(), FF1Error> {
+        if n < 2 || self.radix_power(n) < BigUint::from(1_000_000u32) {
+            return Err(FF1Error::PlaintextTooShort);
+        }
+        if n > self.max_len {
+            return Err(FF1Error::PlaintextTooLong(self.max_len));
+        }
+        Ok(())
+    }
+
     fn radix_power(&self, length: usize) -> BigUint {
         let radix = BigUint::from(self.radix);
         let mut result = BigUint::from(1u32);
@@ -487,8 +495,8 @@ mod tests {
         let key = vec![0u8; 16];
         let tweak = vec![];
         let cipher = FF1::new(&key, &tweak, crate::alphabet::digits()).unwrap();
-        let a = cipher.encrypt("12345").unwrap();
-        let b = cipher.encrypt("12345").unwrap();
+        let a = cipher.encrypt("123456").unwrap();
+        let b = cipher.encrypt("123456").unwrap();
         assert_eq!(a, b);
     }
 

@@ -21,7 +21,7 @@ impl std::fmt::Display for FF3Error {
         match self {
             Self::InvalidKeyLength(n) => write!(f, "invalid key length: {n} (expected 16, 24, or 32)"),
             Self::InvalidTweakLength { got, expected } => write!(f, "invalid tweak length: {got} (expected {expected})"),
-            Self::PlaintextTooShort => write!(f, "plaintext too short (min 2 characters)"),
+            Self::PlaintextTooShort => write!(f, "input too short (NIST minimum: length >= 2 and radix^length >= 1,000,000)"),
             Self::PlaintextTooLong => write!(f, "plaintext too long"),
             Self::InvalidChar(c, pos) => write!(f, "invalid char '{c}' at position {pos}"),
             Self::AlphabetError(e) => write!(f, "alphabet error: {e}"),
@@ -135,8 +135,7 @@ impl FF3 {
     pub fn encrypt(&self, plaintext: &str) -> Result<String, FF3Error> {
         let digits = self.to_digits(plaintext)?;
         let n = digits.len();
-        if n < self.min_len { return Err(FF3Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF3Error::PlaintextTooLong); }
+        self.check_length(n)?;
         let result = self.ff3_encrypt(&digits, &self.tweak);
         Ok(self.from_digits(&result))
     }
@@ -144,8 +143,7 @@ impl FF3 {
     pub fn decrypt(&self, ciphertext: &str) -> Result<String, FF3Error> {
         let digits = self.to_digits(ciphertext)?;
         let n = digits.len();
-        if n < self.min_len { return Err(FF3Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF3Error::PlaintextTooLong); }
+        self.check_length(n)?;
         let result = self.ff3_decrypt(&digits, &self.tweak);
         Ok(self.from_digits(&result))
     }
@@ -153,8 +151,7 @@ impl FF3 {
     pub fn encrypt_with_tweak(&self, plaintext: &str, additional_tweak: &[u8]) -> Result<String, FF3Error> {
         let digits = self.to_digits(plaintext)?;
         let n = digits.len();
-        if n < self.min_len { return Err(FF3Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF3Error::PlaintextTooLong); }
+        self.check_length(n)?;
         let tweak = self.combine_tweaks(additional_tweak);
         let result = self.ff3_encrypt(&digits, &tweak);
         Ok(self.from_digits(&result))
@@ -163,8 +160,7 @@ impl FF3 {
     pub fn decrypt_with_tweak(&self, ciphertext: &str, additional_tweak: &[u8]) -> Result<String, FF3Error> {
         let digits = self.to_digits(ciphertext)?;
         let n = digits.len();
-        if n < self.min_len { return Err(FF3Error::PlaintextTooShort); }
-        if n > self.max_len { return Err(FF3Error::PlaintextTooLong); }
+        self.check_length(n)?;
         let tweak = self.combine_tweaks(additional_tweak);
         let result = self.ff3_decrypt(&digits, &tweak);
         Ok(self.from_digits(&result))
@@ -327,6 +323,18 @@ impl FF3 {
         digits
     }
 
+    /// NIST SP 800-38G minimum-domain check: length >= 2 and
+    /// radix^length >= 1,000,000.
+    fn check_length(&self, n: usize) -> Result<(), FF3Error> {
+        if n < self.min_len || self.radix_power(n) < BigUint::from(1_000_000u32) {
+            return Err(FF3Error::PlaintextTooShort);
+        }
+        if n > self.max_len {
+            return Err(FF3Error::PlaintextTooLong);
+        }
+        Ok(())
+    }
+
     fn radix_power(&self, length: usize) -> BigUint {
         let radix = BigUint::from(self.radix);
         let mut result = BigUint::one();
@@ -472,6 +480,17 @@ mod tests {
         assert!(r.is_err());
     }
 
+    #[test]
+    fn rejects_below_nist_domain() {
+        // NIST SP 800-38G: radix^len must be >= 1,000,000.
+        // 5 digits, radix 10 -> 10^5 = 100,000 < 1,000,000 -> reject.
+        let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
+        let tweak = hex::decode("D8E7920AFA330A73").unwrap();
+        let cipher = FF3::new(&key, &tweak, crate::alphabet::digits()).unwrap();
+        assert!(cipher.encrypt("12345").is_err());
+        assert!(cipher.encrypt("123456").is_ok()); // 10^6 = exactly 1,000,000
+    }
+
     // ── General tests ───────────────────────────────────────────────────
 
     #[test]
@@ -490,8 +509,8 @@ mod tests {
         let key = hex::decode("EF4359D8D580AA4F7F036D6F04FC6A94").unwrap();
         let tweak = hex::decode("D8E7920AFA330A73").unwrap();
         let cipher = FF3::new(&key, &tweak, crate::alphabet::digits()).unwrap();
-        let a = cipher.encrypt("12345").unwrap();
-        let b = cipher.encrypt("12345").unwrap();
+        let a = cipher.encrypt("123456").unwrap();
+        let b = cipher.encrypt("123456").unwrap();
         assert_eq!(a, b);
     }
 
