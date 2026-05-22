@@ -56,7 +56,10 @@ impl AesEncryptor for Aes256Enc {
     fn encrypt_block(&self, block: &mut Block) { self.0.encrypt_block(block); }
 }
 
-/// FF3-1 Format-Preserving Encryption cipher
+/// FF3 (NIST SP 800-38G) Format-Preserving Encryption cipher.
+///
+/// This is the **original** FF3, which is cryptographically weak and
+/// deprecated. New code should use [`FF31`] (FF3-1, SP 800-38G Rev 1).
 pub struct FF3 {
     radix: usize,
     aes_cipher: Box<dyn AesEncryptor>,
