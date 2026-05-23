@@ -14,6 +14,7 @@ pub struct Configuration {
     pub engine: String,
     pub alphabet: Option<String>,
     pub key_ref: Option<String>,
+    pub tweak: Option<String>,       // hex; required for ff3 (8 bytes) and ff31 (7), optional for ff1
     pub header: Option<String>,
     #[serde(default = "default_header_enabled")]
     pub header_enabled: bool,

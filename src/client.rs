@@ -177,16 +177,19 @@ impl Client {
         // 3. Encrypt
         let encrypted = match configuration.engine.as_str() {
             "ff1" => {
-                let cipher = crate::ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
+                let tweak = Self::resolve_tweak(configuration_name, &configuration, &key)?;
+                let cipher = crate::ff1::FF1::new(&key.material, &tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
             }
             "ff3" => {
                 warn_ff3_deprecated();
-                let cipher = crate::ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
+                let tweak = Self::resolve_tweak(configuration_name, &configuration, &key)?;
+                let cipher = crate::ff3::FF3::new(&key.material, &tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
             }
             "ff31" => {
-                let cipher = crate::ff3::FF31::new(&key.material, &key.tweak, alphabet)?;
+                let tweak = Self::resolve_tweak(configuration_name, &configuration, &key)?;
+                let cipher = crate::ff3::FF31::new(&key.material, &tweak, alphabet)?;
                 cipher.encrypt(&extracted)?
             }
             engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
@@ -247,16 +250,19 @@ impl Client {
         // 3. Decrypt
         let decrypted = match configuration.engine.as_str() {
             "ff1" => {
-                let cipher = crate::ff1::FF1::new(&key.material, &key.tweak, alphabet)?;
+                let tweak = Self::resolve_tweak(configuration_name, &configuration, &key)?;
+                let cipher = crate::ff1::FF1::new(&key.material, &tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
             }
             "ff3" => {
                 warn_ff3_deprecated();
-                let cipher = crate::ff3::FF3::new(&key.material, &key.tweak, alphabet)?;
+                let tweak = Self::resolve_tweak(configuration_name, &configuration, &key)?;
+                let cipher = crate::ff3::FF3::new(&key.material, &tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
             }
             "ff31" => {
-                let cipher = crate::ff3::FF31::new(&key.material, &key.tweak, alphabet)?;
+                let tweak = Self::resolve_tweak(configuration_name, &configuration, &key)?;
+                let cipher = crate::ff3::FF31::new(&key.material, &tweak, alphabet)?;
                 cipher.decrypt(&extracted)?
             }
             engine => return Err(CypheraError::UnknownEngine(engine.to_string())),
@@ -418,6 +424,67 @@ impl Client {
             .ok_or_else(|| CypheraError::ConfigurationNotFound("no key_ref in configuration and no default set".to_string()))?;
 
         Ok(self.key_provider.resolve(key_ref)?)
+    }
+
+    /// Resolve the FPE tweak per the spec's configuration-level tweak rules.
+    ///
+    /// FF1: optional — config.tweak if present, else key.tweak fallback for
+    /// backward compatibility with custom KeyProviders that ship tweak with
+    /// the key (legacy rust model), else empty.
+    ///
+    /// FF3: REQUIRED in config, exactly 8 bytes. Missing → hard error with the
+    /// canonical message. No silent zero-fill. Matches NIST SP 800-38G + BC.
+    ///
+    /// FF3-1: REQUIRED in config, exactly 7 bytes. Same shape as FF3.
+    fn resolve_tweak(
+        configuration_name: &str,
+        configuration: &Configuration,
+        key: &KeyRecord,
+    ) -> Result<Vec<u8>> {
+        let from_config = configuration.tweak.as_deref().map(|hex| {
+            hex::decode(hex).map_err(|e| {
+                CypheraError::ConfigurationNotFound(format!(
+                    "configuration '{}' has invalid tweak hex: {}",
+                    configuration_name, e
+                ))
+            })
+        });
+
+        match configuration.engine.as_str() {
+            "ff1" => match from_config {
+                Some(Ok(t)) => Ok(t),
+                Some(Err(e)) => Err(e),
+                None if !key.tweak.is_empty() => Ok(key.tweak.clone()),
+                None => Ok(Vec::new()),
+            },
+            "ff3" => match from_config {
+                Some(Ok(t)) if t.len() == 8 => Ok(t),
+                Some(Ok(t)) => Err(CypheraError::ConfigurationNotFound(format!(
+                    "invalid tweak length: {} (expected 8)",
+                    t.len()
+                ))),
+                Some(Err(e)) => Err(e),
+                None if key.tweak.len() == 8 => Ok(key.tweak.clone()),
+                None => Err(CypheraError::ConfigurationNotFound(format!(
+                    "configuration '{}' is missing required 'tweak' (FF3 needs 8 bytes)",
+                    configuration_name
+                ))),
+            },
+            "ff31" => match from_config {
+                Some(Ok(t)) if t.len() == 7 => Ok(t),
+                Some(Ok(t)) => Err(CypheraError::ConfigurationNotFound(format!(
+                    "invalid tweak length: {} (expected 7)",
+                    t.len()
+                ))),
+                Some(Err(e)) => Err(e),
+                None if key.tweak.len() == 7 => Ok(key.tweak.clone()),
+                None => Err(CypheraError::ConfigurationNotFound(format!(
+                    "configuration '{}' is missing required 'tweak' (FF3-1 needs 7 bytes)",
+                    configuration_name
+                ))),
+            },
+            engine => Err(CypheraError::UnknownEngine(engine.to_string())),
+        }
     }
 
     fn log_event(&self, configuration: &str, operation: &str, engine: &str, key: &KeyRecord, success: bool) {
@@ -662,7 +729,7 @@ mod tests {
 
     #[test]
     fn test_policy_from_json() {
-        let json = r#"{"configurations":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"mykey","header_enabled":false},"card":{"engine":"ff3","alphabet":"digits","key_ref":"mykey","header_enabled":false}}}"#;
+        let json = r#"{"configurations":{"ssn":{"engine":"ff1","alphabet":"alphanumeric","key_ref":"mykey","header_enabled":false},"card":{"engine":"ff3","alphabet":"digits","key_ref":"mykey","tweak":"D8E7920AFA330A73","header_enabled":false}}}"#;
         let pf = ConfigurationFile::from_json(json).unwrap();
         let provider = crate::keys::MemoryProvider::new(vec![
             KeyRecord {
